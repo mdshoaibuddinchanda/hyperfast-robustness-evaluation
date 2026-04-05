@@ -1,0 +1,35 @@
+# OS and editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Local progress notes (keep locally, do not push)
+PROGRESS.md
+
+# Python cache and build files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+
+# Virtual environments and local env files
+.venv/
+.env
+
+# Large model checkpoints
+*.ckpt
+hyperfast.ckpt
+
+# Data should stay local; only keep data/README.md in git
+data/**
+!data/
+!data/README.md
+
+# Generated experiment artifacts
+runs/
+results/
+plots/
+report/
+error_analysis/
+logs/

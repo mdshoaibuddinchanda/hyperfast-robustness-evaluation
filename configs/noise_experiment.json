@@ -1,0 +1,8 @@
+{
+  "experiment_name": "noise_robustness",
+  "noise_type": "gaussian",
+  "apply_to": "continuous_numeric_only",
+  "target_split": ["val", "test"],
+  "sigma_grid": [0.01, 0.05, 0.1, 0.2],
+  "fit_train_clean": true
+}

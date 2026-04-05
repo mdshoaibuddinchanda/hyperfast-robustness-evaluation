@@ -1,0 +1,74 @@
+{
+  "figure_dpi": 300,
+  "export_formats": ["png", "pdf"],
+  "dataset_order": ["adult_income", "credit_default", "heart_disease"],
+  "dataset_labels": {
+    "adult_income": "Adult Income",
+    "credit_default": "Credit Default",
+    "heart_disease": "Heart Disease"
+  },
+  "model_order": ["hyperfast_default", "random_forest", "logistic_regression"],
+  "model_labels": {
+    "hyperfast_default": "HyperFast",
+    "random_forest": "Random Forest",
+    "logistic_regression": "Logistic Regression"
+  },
+  "model_short_labels": {
+    "hyperfast_default": "HF",
+    "random_forest": "RF",
+    "logistic_regression": "LR"
+  },
+  "model_markers": {
+    "hyperfast_default": "D",
+    "random_forest": "s",
+    "logistic_regression": "o"
+  },
+  "model_colors": {
+    "hyperfast_default": "#0072B2",
+    "random_forest": "#E69F00",
+    "logistic_regression": "#009E73"
+  },
+  "worst_case_rules": [
+    {
+      "experiment": "missingness",
+      "condition_name": "rate",
+      "selector": "max",
+      "label_template": "{percent:.0f}% missing"
+    },
+    {
+      "experiment": "noise",
+      "condition_name": "sigma",
+      "selector": "max",
+      "label_template": "noise $\\sigma$ = {value:.2f}"
+    },
+    {
+      "experiment": "reduced_data",
+      "condition_name": "fraction",
+      "selector": "min",
+      "label_template": "{percent:.0f}% train"
+    }
+  ],
+  "line_plots": [
+    {
+      "experiment": "noise",
+      "title": "Accuracy vs Noise Level",
+      "xlabel": "Gaussian sigma",
+      "output_stem": "noise_curves"
+    },
+    {
+      "experiment": "missingness",
+      "title": "Accuracy vs Missingness Rate",
+      "xlabel": "Missing rate",
+      "output_stem": "missingness_curves"
+    },
+    {
+      "experiment": "reduced_data",
+      "title": "Accuracy vs Training Fraction",
+      "xlabel": "Train fraction",
+      "output_stem": "learning_curves"
+    }
+  ],
+  "runtime_plot_stem": "runtime_tradeoff",
+  "drop_plot_stem": "drop_comparison",
+  "robust_claim_experiments": ["noise", "missingness"]
+}

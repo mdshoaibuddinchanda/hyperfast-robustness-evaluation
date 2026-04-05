@@ -1,0 +1,7 @@
+{
+  "datasets": ["heart_disease", "adult_income", "credit_default"],
+  "test_size": 0.2,
+  "val_size": 0.1,
+  "test_seed": 42,
+  "seeds": [1, 2, 3, 4, 5]
+}

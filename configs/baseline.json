@@ -1,0 +1,10 @@
+{
+  "experiment_name": "baseline_clean",
+  "datasets": ["heart_disease", "adult_income", "credit_default"],
+  "seeds": [1, 2, 3, 4, 5],
+  "primary_metric": "balanced_accuracy",
+  "secondary_metrics": ["f1", "precision", "recall", "auroc"],
+  "models": ["hyperfast_default", "logistic_regression", "random_forest"],
+  "runtime_tracking": true,
+  "save_predictions": true
+}

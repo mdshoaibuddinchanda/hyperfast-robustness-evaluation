@@ -1,0 +1,11 @@
+{
+  "model": "hyperfast",
+  "preset": "tuned_validation_only",
+  "params_grid": {
+    "n_ensemble": [1, 3, 5],
+    "optimization": [null, "default"],
+    "stratify_sampling": [false, true],
+    "feature_bagging": [false, true]
+  },
+  "selection_policy": "best_validation_balanced_accuracy"
+}

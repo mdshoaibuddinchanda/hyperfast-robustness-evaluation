@@ -1,0 +1,11 @@
+{
+  "experiment_name": "missingness_robustness",
+  "missingness_mode": "MCAR",
+  "rates": [0.1, 0.2, 0.3],
+  "target_split": ["val", "test"],
+  "imputation": {
+    "numeric": "median",
+    "categorical": "most_frequent",
+    "fit_on_train_only": true
+  }
+}

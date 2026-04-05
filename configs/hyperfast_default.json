@@ -1,0 +1,11 @@
+{
+  "model": "hyperfast",
+  "preset": "default_like",
+  "params": {
+    "n_ensemble": 1,
+    "optimization": null,
+    "stratify_sampling": false,
+    "feature_bagging": false
+  },
+  "selection_policy": "fixed"
+}
