@@ -1,0 +1,55 @@
+Non-Commercial Research and Private Use License (NCRPU-1.0)
+
+Copyright (c) 2026 HyperFast Robustness Benchmark contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to use,
+copy, and modify the Software for private use and non-commercial research
+purposes, subject to the conditions below.
+
+1. Allowed Use
+
+You may:
+
+- use the Software for personal, private, or educational purposes;
+- use the Software for academic, scientific, or non-profit research;
+- copy and modify the Software for the allowed purposes above.
+
+1. Required Conditions
+
+You must:
+
+- keep this license text and copyright notice in all copies or substantial
+  portions of the Software;
+- clearly indicate material changes when redistributing modified versions.
+
+1. Commercial Use Prohibited
+
+You may not use the Software, or any derivative work of the Software, for any
+commercial purpose. Commercial purpose includes, without limitation:
+
+- selling or licensing the Software;
+- offering paid services that use the Software;
+- using the Software in commercial consulting, internal business operations,
+  or any for-profit product or service.
+
+If you need commercial rights, you must obtain separate written permission from
+the copyright holders.
+
+1. No Warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+1. Limitation of Liability
+
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR
+OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE
+OR OTHER DEALINGS IN THE SOFTWARE.
+
+1. Termination
+
+Any use that violates this license automatically terminates the rights granted
+under this license.

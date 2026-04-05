@@ -109,6 +109,17 @@ python src/verify_artifact_lineage.py
 
 These are intentionally ignored in git.
 
+## License
+
+This project is licensed under the Non-Commercial Research and Private Use
+License (NCRPU-1.0). See `LICENSE` for full terms.
+
+In short:
+
+- Allowed: private use, education, and non-commercial research
+- Not allowed: any commercial use
+- Warranty: provided "AS IS" with no guarantees or liability
+
 ## Citation
 
 ### HyperFast (software used)
