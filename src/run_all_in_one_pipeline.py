@@ -13,6 +13,10 @@ This script performs the full workflow in one command:
 Safety default:
 - Refuses to start if another `run_full_comparison.py` process is active,
   unless `--allow-concurrent-run` is provided.
+
+Auto behavior default:
+- Missing requirements/data/checkpoint/splits are handled automatically.
+- Use `--no-auto-*` flags to disable any automatic step.
 """
 
 from __future__ import annotations
@@ -393,25 +397,62 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Allow running even when another run_full_comparison.py is active.",
     )
+
+    # Backward-compatible enable flags (kept hidden), plus explicit disable flags.
     parser.add_argument(
         "--auto-install-requirements",
+        dest="auto_install_requirements",
         action="store_true",
-        help="Install/upgrade missing packages from requirements.txt.",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--no-auto-install-requirements",
+        dest="auto_install_requirements",
+        action="store_false",
+        help="Do not auto-install missing packages from requirements.txt.",
     )
     parser.add_argument(
         "--auto-download-data",
+        dest="auto_download_data",
         action="store_true",
-        help="Download missing dataset files automatically.",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--no-auto-download-data",
+        dest="auto_download_data",
+        action="store_false",
+        help="Do not auto-download missing dataset files.",
     )
     parser.add_argument(
         "--auto-download-checkpoint",
+        dest="auto_download_checkpoint",
         action="store_true",
-        help="Download missing hyperfast.ckpt automatically.",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--no-auto-download-checkpoint",
+        dest="auto_download_checkpoint",
+        action="store_false",
+        help="Do not auto-download missing hyperfast.ckpt.",
     )
     parser.add_argument(
         "--auto-generate-splits",
+        dest="auto_generate_splits",
         action="store_true",
-        help="Generate missing split files automatically.",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--no-auto-generate-splits",
+        dest="auto_generate_splits",
+        action="store_false",
+        help="Do not auto-generate missing split files.",
+    )
+
+    parser.set_defaults(
+        auto_install_requirements=True,
+        auto_download_data=True,
+        auto_download_checkpoint=True,
+        auto_generate_splits=True,
     )
     return parser
 
@@ -423,6 +464,13 @@ def main() -> None:
 
     print("[INFO] All-in-one pipeline runner starting...")
     print(f"[INFO] Project root: {PROJECT_ROOT}")
+    print(
+        "[INFO] Auto mode: "
+        f"requirements={args.auto_install_requirements}, "
+        f"data={args.auto_download_data}, "
+        f"checkpoint={args.auto_download_checkpoint}, "
+        f"splits={args.auto_generate_splits}"
+    )
 
     started = time.perf_counter()
     summary: list[StepResult] = []
