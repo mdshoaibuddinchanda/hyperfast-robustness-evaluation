@@ -977,8 +977,15 @@ def generate_drop_comparison_plot(drop_df: pd.DataFrame) -> None:
         axes = [axes]
 
     x = np.arange(len(condition_order))
-    width = 0.24
-    offsets = np.array([-width, 0.0, width])
+    plot_models = [
+        model for model in MODEL_ORDER
+        if model in set(worst_case["model"].astype(str))
+    ]
+    if not plot_models:
+        return
+
+    width = min(0.8 / len(plot_models), 0.28)
+    offsets = (np.arange(len(plot_models)) - (len(plot_models) - 1) / 2.0) * width
 
     all_drop_values = pd.to_numeric(worst_case["drop_pct"], errors="coerce")
     y_min = min(-1.0, float(np.floor(all_drop_values.min() - 0.6)))
@@ -989,7 +996,7 @@ def generate_drop_comparison_plot(drop_df: pd.DataFrame) -> None:
         ax.set_facecolor("white")
         subset = worst_case[worst_case["dataset"] == dataset].copy()
 
-        for model_idx, model in enumerate(MODEL_ORDER):
+        for model_idx, model in enumerate(plot_models):
             model_vals: list[float] = []
             for cond_label in condition_order:
                 row = subset[
