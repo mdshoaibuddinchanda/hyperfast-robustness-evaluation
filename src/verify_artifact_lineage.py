@@ -57,31 +57,73 @@ def _load_raw_runs(runs_dir: Path) -> pd.DataFrame:
 
         for result in payload["results"]:
             model = result["model"]
-            timing = result["timing"]
+            timing = result.get("timing")
+            error = result.get("error")
 
             for split in ["validation", "test"]:
-                metrics = result[split]
-                rows.append(
-                    {
-                        "dataset": dataset,
-                        "seed": seed,
-                        "experiment": experiment,
-                        "condition_name": condition_name,
-                        "condition_value": condition_value,
-                        "model": model,
-                        "split": split,
-                        "balanced_accuracy": float(metrics["balanced_accuracy"]),
-                        "f1": float(metrics["f1"]),
-                        "precision": float(metrics["precision"]),
-                        "recall": float(metrics["recall"]),
-                        "auroc": float(metrics["auroc"]),
-                        "fit_time_sec": float(timing["fit_time_sec"]),
-                        "predict_time_sec": float(timing["predict_time_sec"]),
-                        "total_time_sec": float(timing["total_time_sec"]),
-                    }
-                )
+                metrics = result.get(split)
+                if error is not None or metrics is None or timing is None:
+                    rows.append(
+                        {
+                            "dataset": dataset,
+                            "seed": seed,
+                            "experiment": experiment,
+                            "condition_name": condition_name,
+                            "condition_value": condition_value,
+                            "model": model,
+                            "split": split,
+                            "status": "error",
+                            "balanced_accuracy": np.nan,
+                            "f1": np.nan,
+                            "precision": np.nan,
+                            "recall": np.nan,
+                            "auroc": np.nan,
+                            "fit_time_sec": np.nan,
+                            "predict_time_sec": np.nan,
+                            "total_time_sec": np.nan,
+                        }
+                    )
+                else:
+                    rows.append(
+                        {
+                            "dataset": dataset,
+                            "seed": seed,
+                            "experiment": experiment,
+                            "condition_name": condition_name,
+                            "condition_value": condition_value,
+                            "model": model,
+                            "split": split,
+                            "status": "ok",
+                            "balanced_accuracy": float(metrics["balanced_accuracy"]),
+                            "f1": float(metrics["f1"]),
+                            "precision": float(metrics["precision"]),
+                            "recall": float(metrics["recall"]),
+                            "auroc": float(metrics["auroc"]),
+                            "fit_time_sec": float(timing["fit_time_sec"]),
+                            "predict_time_sec": float(timing["predict_time_sec"]),
+                            "total_time_sec": float(timing["total_time_sec"]),
+                        }
+                    )
 
-    return pd.DataFrame(rows)
+    columns = [
+        "dataset",
+        "seed",
+        "experiment",
+        "condition_name",
+        "condition_value",
+        "model",
+        "split",
+        "status",
+        "balanced_accuracy",
+        "f1",
+        "precision",
+        "recall",
+        "auroc",
+        "fit_time_sec",
+        "predict_time_sec",
+        "total_time_sec",
+    ]
+    return pd.DataFrame(rows, columns=columns)
 
 
 def _max_abs_diff(joined: pd.DataFrame, columns: list[str]) -> float:
@@ -114,6 +156,7 @@ def verify(project_root: Path) -> tuple[bool, list[dict[str, str]]]:
 
     raw_df = _load_raw_runs(runs_dir)
     raw_df = _normalize_condition_value(raw_df)
+    raw_ok = raw_df[raw_df["status"] == "ok"].copy()
 
     metrics_df = pd.read_csv(results_dir / "metrics.csv")
     metrics_ok = metrics_df[metrics_df["status"] == "ok"].copy()
@@ -140,7 +183,7 @@ def verify(project_root: Path) -> tuple[bool, list[dict[str, str]]]:
     ]
 
     merged_raw_metrics = metrics_ok[key_cols + value_cols].merge(
-        raw_df[key_cols + value_cols],
+        raw_ok[key_cols + value_cols],
         on=key_cols,
         how="outer",
         suffixes=("_metrics", "_raw"),
@@ -161,9 +204,112 @@ def verify(project_root: Path) -> tuple[bool, list[dict[str, str]]]:
         "raw_runs_to_metrics_csv",
         missing_left == 0 and missing_right == 0 and max_diff_raw_metrics <= NUM_TOL,
         (
-            f"rows_raw={len(raw_df)}, rows_metrics_ok={len(metrics_ok)}, "
+            f"rows_raw_ok={len(raw_ok)}, rows_metrics_ok={len(metrics_ok)}, "
             f"left_only={missing_left}, right_only={missing_right}, "
             f"max_abs_diff={max_diff_raw_metrics:.3e}"
+        ),
+    )
+
+    calc_status = (
+        metrics_df[metrics_df["split"] == "test"]
+        .assign(
+            attempted_runs=1,
+            ok_runs=lambda d: (d["status"] == "ok").astype(int),
+            error_runs=lambda d: (d["status"] != "ok").astype(int),
+        )
+        .groupby(
+            ["dataset", "experiment", "condition_name", "condition_value", "model"],
+            as_index=False,
+        )
+        .agg(
+            attempted_runs=("attempted_runs", "sum"),
+            ok_runs=("ok_runs", "sum"),
+            error_runs=("error_runs", "sum"),
+        )
+    )
+    calc_status["ok_rate"] = np.where(
+        calc_status["attempted_runs"] > 0,
+        calc_status["ok_runs"] / calc_status["attempted_runs"],
+        np.nan,
+    )
+    calc_status["error_rate"] = np.where(
+        calc_status["attempted_runs"] > 0,
+        calc_status["error_runs"] / calc_status["attempted_runs"],
+        np.nan,
+    )
+
+    file_status = _normalize_condition_value(
+        pd.read_csv(summary_dir / "status_coverage_by_condition.csv")
+    )
+    joined_status = file_status.merge(
+        calc_status,
+        on=["dataset", "experiment", "condition_name", "condition_value", "model"],
+        how="outer",
+        suffixes=("_file", "_calc"),
+        indicator=True,
+    )
+    status_left = int((joined_status["_merge"] == "left_only").sum())
+    status_right = int((joined_status["_merge"] == "right_only").sum())
+    status_max_diff = _max_abs_diff(
+        joined_status,
+        ["attempted_runs", "ok_runs", "error_runs", "ok_rate", "error_rate"],
+    )
+
+    _add_check(
+        checks,
+        "metrics_to_status_coverage",
+        status_left == 0 and status_right == 0 and status_max_diff <= NUM_TOL,
+        (
+            f"left_only={status_left}, right_only={status_right}, "
+            f"max_abs_diff={status_max_diff:.3e}"
+        ),
+    )
+
+    calc_status_model = (
+        calc_status.groupby("model", as_index=False)
+        .agg(
+            attempted_runs=("attempted_runs", "sum"),
+            ok_runs=("ok_runs", "sum"),
+            error_runs=("error_runs", "sum"),
+        )
+    )
+    calc_status_model["ok_rate"] = np.where(
+        calc_status_model["attempted_runs"] > 0,
+        calc_status_model["ok_runs"] / calc_status_model["attempted_runs"],
+        np.nan,
+    )
+    calc_status_model["error_rate"] = np.where(
+        calc_status_model["attempted_runs"] > 0,
+        calc_status_model["error_runs"] / calc_status_model["attempted_runs"],
+        np.nan,
+    )
+
+    file_status_model = pd.read_csv(summary_dir / "status_coverage_by_model.csv")
+    joined_status_model = file_status_model.merge(
+        calc_status_model,
+        on=["model"],
+        how="outer",
+        suffixes=("_file", "_calc"),
+        indicator=True,
+    )
+    status_model_left = int((joined_status_model["_merge"] == "left_only").sum())
+    status_model_right = int((joined_status_model["_merge"] == "right_only").sum())
+    status_model_max_diff = _max_abs_diff(
+        joined_status_model,
+        ["attempted_runs", "ok_runs", "error_runs", "ok_rate", "error_rate"],
+    )
+
+    _add_check(
+        checks,
+        "metrics_to_status_coverage_by_model",
+        (
+            status_model_left == 0
+            and status_model_right == 0
+            and status_model_max_diff <= NUM_TOL
+        ),
+        (
+            f"left_only={status_model_left}, right_only={status_model_right}, "
+            f"max_abs_diff={status_model_max_diff:.3e}"
         ),
     )
 
@@ -470,7 +616,7 @@ def verify(project_root: Path) -> tuple[bool, list[dict[str, str]]]:
         ),
     )
 
-    trained_models = sorted(raw_df["model"].unique().tolist())
+    trained_models = sorted(raw_ok["model"].unique().tolist())
     metrics_models = sorted(metrics_ok["model"].unique().tolist())
     summary_models = sorted(summary["model"].unique().tolist())
     drop_plot_models = sorted(file_drop_plot["model"].unique().tolist())

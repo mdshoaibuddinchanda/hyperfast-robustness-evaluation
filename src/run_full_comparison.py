@@ -20,7 +20,11 @@ if str(CURRENT_DIR) not in sys.path:
 
 from baselines import get_classical_baselines
 from data_loading import get_feature_types, load_dataset
-from hyperfast_runner import build_hyperfast_default
+from hyperfast_runner import (
+    build_hyperfast,
+    build_hyperfast_default,
+    select_best_hyperfast_tuned,
+)
 from metrics import compute_binary_classification_metrics
 from preprocessing import build_shared_preprocessor
 
@@ -151,6 +155,91 @@ def _fit_and_evaluate(
         return (
             {
                 "model": model_name,
+                "error": str(exc),
+                "timing": None,
+                "validation": None,
+                "test": None,
+            },
+            {
+                "val_pred": [],
+                "test_pred": [],
+                "val_score": None,
+                "test_score": None,
+            },
+            None,
+        )
+
+
+def _fit_and_evaluate_hyperfast_tuned(
+    seed: int,
+    x_train: np.ndarray,
+    y_train: np.ndarray,
+    x_val: np.ndarray,
+    y_val: np.ndarray,
+    x_test: np.ndarray,
+    y_test: np.ndarray,
+) -> tuple[dict[str, Any], dict[str, list[Any]], Any | None]:
+    """Select HyperFast tuned params on validation then evaluate test."""
+    try:
+        (
+            model,
+            best_params,
+            best_val_bal_acc,
+            candidate_count,
+            total_fit_time,
+        ) = select_best_hyperfast_tuned(
+            seed=seed,
+            x_train=x_train,
+            y_train=y_train,
+            x_val=x_val,
+            y_val=y_val,
+        )
+
+        pred_start = time.perf_counter()
+        val_pred = model.predict(x_val)
+        test_pred = model.predict(x_test)
+        predict_time = time.perf_counter() - pred_start
+
+        val_score = _extract_positive_scores(model, x_val)
+        test_score = _extract_positive_scores(model, x_test)
+
+        result = {
+            "model": "hyperfast_tuned",
+            "selection": {
+                "policy": "best_validation_balanced_accuracy",
+                "candidate_count": candidate_count,
+                "best_validation_balanced_accuracy": best_val_bal_acc,
+                "best_params": best_params,
+            },
+            "timing": {
+                # Includes full candidate-search fitting cost.
+                "fit_time_sec": total_fit_time,
+                "predict_time_sec": predict_time,
+                "total_time_sec": total_fit_time + predict_time,
+            },
+            "validation": compute_binary_classification_metrics(
+                y_val,
+                val_pred,
+                val_score,
+            ),
+            "test": compute_binary_classification_metrics(
+                y_test,
+                test_pred,
+                test_score,
+            ),
+        }
+
+        predictions = {
+            "val_pred": val_pred.tolist(),
+            "test_pred": test_pred.tolist(),
+            "val_score": None if val_score is None else val_score.tolist(),
+            "test_score": None if test_score is None else test_score.tolist(),
+        }
+        return result, predictions, model
+    except Exception as exc:  # pragma: no cover - runtime guard
+        return (
+            {
+                "model": "hyperfast_tuned",
                 "error": str(exc),
                 "timing": None,
                 "validation": None,
@@ -414,6 +503,65 @@ def _summarize_metrics(metrics_df: pd.DataFrame) -> None:
     SUMMARY_ROOT.mkdir(parents=True, exist_ok=True)
     LOGS_ROOT.mkdir(parents=True, exist_ok=True)
 
+    test_rows = metrics_df[metrics_df["split"] == "test"].copy()
+    test_rows["attempted_runs"] = 1
+    test_rows["ok_runs"] = (test_rows["status"] == "ok").astype(int)
+    test_rows["error_runs"] = (test_rows["status"] != "ok").astype(int)
+
+    status_coverage = (
+        test_rows.groupby(
+            ["experiment", "dataset", "model", "condition_name", "condition_value"],
+            dropna=False,
+        )
+        .agg(
+            attempted_runs=("attempted_runs", "sum"),
+            ok_runs=("ok_runs", "sum"),
+            error_runs=("error_runs", "sum"),
+        )
+        .reset_index()
+    )
+    status_coverage["ok_rate"] = np.where(
+        status_coverage["attempted_runs"] > 0,
+        status_coverage["ok_runs"] / status_coverage["attempted_runs"],
+        np.nan,
+    )
+    status_coverage["error_rate"] = np.where(
+        status_coverage["attempted_runs"] > 0,
+        status_coverage["error_runs"] / status_coverage["attempted_runs"],
+        np.nan,
+    )
+    status_coverage = status_coverage.sort_values(
+        ["experiment", "dataset", "condition_name", "condition_value", "model"]
+    )
+    status_coverage.to_csv(
+        SUMMARY_ROOT / "status_coverage_by_condition.csv",
+        index=False,
+    )
+
+    status_by_model = (
+        status_coverage.groupby("model", as_index=False)
+        .agg(
+            attempted_runs=("attempted_runs", "sum"),
+            ok_runs=("ok_runs", "sum"),
+            error_runs=("error_runs", "sum"),
+        )
+        .sort_values("attempted_runs", ascending=False)
+    )
+    status_by_model["ok_rate"] = np.where(
+        status_by_model["attempted_runs"] > 0,
+        status_by_model["ok_runs"] / status_by_model["attempted_runs"],
+        np.nan,
+    )
+    status_by_model["error_rate"] = np.where(
+        status_by_model["attempted_runs"] > 0,
+        status_by_model["error_runs"] / status_by_model["attempted_runs"],
+        np.nan,
+    )
+    status_by_model.to_csv(
+        SUMMARY_ROOT / "status_coverage_by_model.csv",
+        index=False,
+    )
+
     test_ok = metrics_df[
         (metrics_df["split"] == "test") & (metrics_df["status"] == "ok")
     ].copy()
@@ -439,6 +587,11 @@ def _summarize_metrics(metrics_df: pd.DataFrame) -> None:
             by=["experiment", "dataset", "condition_name", "condition_value", "model"]
         )
     )
+    grouped = grouped.merge(
+        status_coverage,
+        on=["experiment", "dataset", "model", "condition_name", "condition_value"],
+        how="left",
+    )
 
     grouped.to_csv(SUMMARY_ROOT / "test_mean_std_by_condition.csv", index=False)
 
@@ -455,6 +608,7 @@ def _summarize_metrics(metrics_df: pd.DataFrame) -> None:
         "# Full Comparison Summary",
         "",
         f"Total metric rows: {len(metrics_df)}",
+        f"Total test rows attempted: {len(test_rows)}",
         f"Test rows used for summary: {len(test_ok)}",
         "",
         "## Baseline Clean (Mean Balanced Accuracy)",
@@ -470,6 +624,18 @@ def _summarize_metrics(metrics_df: pd.DataFrame) -> None:
                 f"{row['dataset']} | {row['model']} | "
                 f"bal_acc={row['balanced_accuracy_mean']:.6f} "
                 f"+- {0.0 if pd.isna(row['balanced_accuracy_std']) else row['balanced_accuracy_std']:.6f}"
+            )
+
+    report_lines.extend(["", "## Test Reliability (Attempted vs Error)", ""])
+    if status_by_model.empty:
+        report_lines.append("No reliability rows available.")
+    else:
+        for _, row in status_by_model.iterrows():
+            report_lines.append(
+                "- "
+                f"{row['model']}: attempted={int(row['attempted_runs'])}, "
+                f"ok={int(row['ok_runs'])}, error={int(row['error_runs'])}, "
+                f"ok_rate={row['ok_rate']:.3f}, error_rate={row['error_rate']:.3f}"
             )
 
     (LOGS_ROOT / "full_comparison_summary.md").write_text(
@@ -514,6 +680,7 @@ def run_full_comparison(config: ExperimentConfig) -> None:
             baseline_predictions: list[dict[str, Any]] = []
             fitted_models: dict[str, dict[str, Any]] = {}
             model_errors: dict[str, str] = {}
+            tuned_best_params: dict[str, Any] | None = None
 
             for model_name, model_builder in model_builders.items():
                 result, predictions, fitted_model = _fit_and_evaluate(
@@ -564,6 +731,62 @@ def run_full_comparison(config: ExperimentConfig) -> None:
                 else:
                     model_errors[model_name] = str(result["error"])
 
+            tuned_result, tuned_predictions, tuned_model = _fit_and_evaluate_hyperfast_tuned(
+                seed=seed,
+                x_train=x_train,
+                y_train=y_train,
+                x_val=x_val,
+                y_val=y_val,
+                x_test=x_test,
+                y_test=y_test,
+            )
+            baseline_results.append(tuned_result)
+            if tuned_model is not None:
+                fitted_models["hyperfast_tuned"] = {
+                    "model": tuned_model,
+                    "fit_time_sec": tuned_result["timing"]["fit_time_sec"],
+                }
+                selection = tuned_result.get("selection", {})
+                if isinstance(selection, dict) and isinstance(
+                    selection.get("best_params"),
+                    dict,
+                ):
+                    tuned_best_params = dict(selection["best_params"])
+                baseline_predictions.extend(
+                    _build_prediction_rows(
+                        dataset=dataset,
+                        seed=seed,
+                        model_name="hyperfast_tuned",
+                        split_name="validation",
+                        y_true=y_val,
+                        y_pred=tuned_predictions["val_pred"],
+                        y_score=tuned_predictions["val_score"],
+                        experiment="baseline",
+                        condition_name="clean",
+                        condition_value="clean",
+                    )
+                )
+                baseline_predictions.extend(
+                    _build_prediction_rows(
+                        dataset=dataset,
+                        seed=seed,
+                        model_name="hyperfast_tuned",
+                        split_name="test",
+                        y_true=y_test,
+                        y_pred=tuned_predictions["test_pred"],
+                        y_score=tuned_predictions["test_score"],
+                        experiment="baseline",
+                        condition_name="clean",
+                        condition_value="clean",
+                    )
+                )
+            else:
+                model_errors["hyperfast_tuned"] = str(tuned_result["error"])
+
+            all_model_names = list(model_builders.keys())
+            if "hyperfast_tuned" not in all_model_names:
+                all_model_names.append("hyperfast_tuned")
+
             baseline_metrics_path = _save_condition_artifacts(
                 dataset=dataset,
                 seed=seed,
@@ -606,7 +829,7 @@ def run_full_comparison(config: ExperimentConfig) -> None:
                 noise_results: list[dict[str, Any]] = []
                 noise_predictions: list[dict[str, Any]] = []
 
-                for model_name in model_builders:
+                for model_name in all_model_names:
                     if model_name in fitted_models:
                         result, predictions = _evaluate_pretrained(
                             model_name=model_name,
@@ -700,7 +923,7 @@ def run_full_comparison(config: ExperimentConfig) -> None:
                 missing_results: list[dict[str, Any]] = []
                 missing_predictions: list[dict[str, Any]] = []
 
-                for model_name in model_builders:
+                for model_name in all_model_names:
                     if model_name in fitted_models:
                         result, predictions = _evaluate_pretrained(
                             model_name=model_name,
@@ -836,6 +1059,66 @@ def run_full_comparison(config: ExperimentConfig) -> None:
                                 condition_value=fraction_text,
                             )
                         )
+
+                if tuned_best_params is not None:
+                    tuned_result, tuned_predictions, _ = _fit_and_evaluate(
+                        model_name="hyperfast_tuned",
+                        model_builder=lambda params=tuned_best_params: build_hyperfast(
+                            seed=seed,
+                            n_ensemble=int(params.get("n_ensemble", 1)),
+                            optimization=params.get("optimization", None),
+                            stratify_sampling=bool(
+                                params.get("stratify_sampling", False)
+                            ),
+                            feature_bagging=bool(params.get("feature_bagging", False)),
+                        ),
+                        x_train=x_train_sub,
+                        y_train=y_train_sub,
+                        x_val=x_val_sub,
+                        y_val=y_val,
+                        x_test=x_test_sub,
+                        y_test=y_test,
+                    )
+                else:
+                    tuned_result, tuned_predictions, _ = _fit_and_evaluate_hyperfast_tuned(
+                        seed=seed,
+                        x_train=x_train_sub,
+                        y_train=y_train_sub,
+                        x_val=x_val_sub,
+                        y_val=y_val,
+                        x_test=x_test_sub,
+                        y_test=y_test,
+                    )
+                reduced_results.append(tuned_result)
+                if "error" not in tuned_result:
+                    reduced_predictions.extend(
+                        _build_prediction_rows(
+                            dataset=dataset,
+                            seed=seed,
+                            model_name="hyperfast_tuned",
+                            split_name="validation",
+                            y_true=y_val,
+                            y_pred=tuned_predictions["val_pred"],
+                            y_score=tuned_predictions["val_score"],
+                            experiment="reduced_data",
+                            condition_name="fraction",
+                            condition_value=fraction_text,
+                        )
+                    )
+                    reduced_predictions.extend(
+                        _build_prediction_rows(
+                            dataset=dataset,
+                            seed=seed,
+                            model_name="hyperfast_tuned",
+                            split_name="test",
+                            y_true=y_test,
+                            y_pred=tuned_predictions["test_pred"],
+                            y_score=tuned_predictions["test_score"],
+                            experiment="reduced_data",
+                            condition_name="fraction",
+                            condition_value=fraction_text,
+                        )
+                    )
 
                 reduced_metrics_path = _save_condition_artifacts(
                     dataset=dataset,

@@ -7,24 +7,33 @@
     "credit_default": "Credit Default",
     "heart_disease": "Heart Disease"
   },
-  "model_order": ["hyperfast_default", "random_forest", "logistic_regression"],
+  "model_order": [
+    "hyperfast_default",
+    "hyperfast_tuned",
+    "random_forest",
+    "logistic_regression"
+  ],
   "model_labels": {
     "hyperfast_default": "HyperFast",
+    "hyperfast_tuned": "HyperFast (tuned)",
     "random_forest": "Random Forest",
     "logistic_regression": "Logistic Regression"
   },
   "model_short_labels": {
     "hyperfast_default": "HF",
+    "hyperfast_tuned": "HFT",
     "random_forest": "RF",
     "logistic_regression": "LR"
   },
   "model_markers": {
     "hyperfast_default": "D",
+    "hyperfast_tuned": "^",
     "random_forest": "s",
     "logistic_regression": "o"
   },
   "model_colors": {
     "hyperfast_default": "#0072B2",
+    "hyperfast_tuned": "#CC79A7",
     "random_forest": "#E69F00",
     "logistic_regression": "#009E73"
   },
@@ -70,5 +79,5 @@
   ],
   "runtime_plot_stem": "runtime_tradeoff",
   "drop_plot_stem": "drop_comparison",
-  "robust_claim_experiments": ["noise", "missingness"]
+  "robust_claim_experiments": ["noise", "missingness", "reduced_data"]
 }

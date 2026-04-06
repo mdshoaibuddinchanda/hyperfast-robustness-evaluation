@@ -98,6 +98,13 @@ python src/generate_analysis_artifacts.py
 python src/verify_artifact_lineage.py
 ```
 
+1) Validate research-integrity safeguards (model coverage, reliability tables,
+   and adjusted significance outputs):
+
+```powershell
+python src/validate_research_integrity.py
+```
+
 ## What Gets Generated (Local)
 
 - `runs/`
@@ -108,6 +115,19 @@ python src/verify_artifact_lineage.py
 - `logs/`
 
 These are intentionally ignored in git.
+
+## Research-Integrity Safeguards
+
+This repository includes explicit safeguards for reproducible and defensible
+reporting:
+
+- HyperFast default and HyperFast tuned (validation-only selection) are both
+  evaluated.
+- Reliability tables report attempted/ok/error runs per condition and model.
+- Statistical tables include Wilcoxon or paired t-test p-values with Holm
+  correction.
+- Lineage checks verify consistency from raw run artifacts to summary tables and
+  plot source data.
 
 ## License
 

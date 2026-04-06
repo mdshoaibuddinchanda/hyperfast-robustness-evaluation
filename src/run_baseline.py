@@ -18,7 +18,7 @@ if str(CURRENT_DIR) not in sys.path:
 
 from baselines import get_classical_baselines
 from data_loading import DATASET_SPECS, load_dataset
-from hyperfast_runner import build_hyperfast_default
+from hyperfast_runner import build_hyperfast_default, select_best_hyperfast_tuned
 from metrics import compute_binary_classification_metrics
 from preprocessing import build_shared_preprocessor
 
@@ -81,6 +81,62 @@ def _run_model(
 
     return {
         "model": model_name,
+        "timing": {
+            "fit_time_sec": fit_time_sec,
+            "predict_time_sec": predict_time_sec,
+            "total_time_sec": fit_time_sec + predict_time_sec,
+        },
+        "validation": compute_binary_classification_metrics(y_val, val_pred, val_score),
+        "test": compute_binary_classification_metrics(y_test, test_pred, test_score),
+        "predictions": {
+            "val_pred": val_pred.tolist(),
+            "test_pred": test_pred.tolist(),
+            "val_score": None if val_score is None else val_score.tolist(),
+            "test_score": None if test_score is None else test_score.tolist(),
+        },
+    }
+
+
+def _run_hyperfast_tuned(
+    seed: int,
+    x_train: np.ndarray,
+    y_train: np.ndarray,
+    x_val: np.ndarray,
+    y_val: np.ndarray,
+    x_test: np.ndarray,
+    y_test: np.ndarray,
+) -> dict[str, Any]:
+    """Tune HyperFast on validation split, then evaluate test split."""
+    (
+        model,
+        best_params,
+        best_val_bal_acc,
+        candidate_count,
+        fit_time_sec,
+    ) = select_best_hyperfast_tuned(
+        seed=seed,
+        x_train=x_train,
+        y_train=y_train,
+        x_val=x_val,
+        y_val=y_val,
+    )
+
+    pred_start = time.perf_counter()
+    val_pred = model.predict(x_val)
+    test_pred = model.predict(x_test)
+    predict_time_sec = time.perf_counter() - pred_start
+
+    val_score = _extract_positive_scores(model, x_val)
+    test_score = _extract_positive_scores(model, x_test)
+
+    return {
+        "model": "hyperfast_tuned",
+        "selection": {
+            "policy": "best_validation_balanced_accuracy",
+            "candidate_count": candidate_count,
+            "best_validation_balanced_accuracy": best_val_bal_acc,
+            "best_params": best_params,
+        },
         "timing": {
             "fit_time_sec": fit_time_sec,
             "predict_time_sec": predict_time_sec,
@@ -188,6 +244,60 @@ def run_baseline(dataset: str, seed: int, output_root: Path) -> Path:
                     "test": None,
                 }
             )
+
+    try:
+        tuned_result = _run_hyperfast_tuned(
+            seed=seed,
+            x_train=np.asarray(x_train_t),
+            y_train=y_train,
+            x_val=np.asarray(x_val_t),
+            y_val=y_val,
+            x_test=np.asarray(x_test_t),
+            y_test=y_test,
+        )
+        model_results.append({k: v for k, v in tuned_result.items() if k != "predictions"})
+
+        for split_name, y_true_values, y_pred_values, y_score_values in [
+            (
+                "val",
+                y_val,
+                tuned_result["predictions"]["val_pred"],
+                tuned_result["predictions"]["val_score"],
+            ),
+            (
+                "test",
+                y_test,
+                tuned_result["predictions"]["test_pred"],
+                tuned_result["predictions"]["test_score"],
+            ),
+        ]:
+            for row_idx, (y_true_item, y_pred_item) in enumerate(
+                zip(y_true_values, y_pred_values, strict=False)
+            ):
+                prediction_rows.append(
+                    {
+                        "dataset": dataset,
+                        "seed": seed,
+                        "model": "hyperfast_tuned",
+                        "split": split_name,
+                        "row_number_within_split": row_idx,
+                        "y_true": int(y_true_item),
+                        "y_pred": int(y_pred_item),
+                        "y_score": None
+                        if y_score_values is None
+                        else float(y_score_values[row_idx]),
+                    }
+                )
+    except Exception as exc:  # pragma: no cover - runtime robustness guard
+        model_results.append(
+            {
+                "model": "hyperfast_tuned",
+                "error": str(exc),
+                "timing": None,
+                "validation": None,
+                "test": None,
+            }
+        )
 
     output_dir = output_root / dataset / f"seed{seed}"
     output_dir.mkdir(parents=True, exist_ok=True)

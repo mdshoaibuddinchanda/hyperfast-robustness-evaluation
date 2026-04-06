@@ -274,6 +274,80 @@ def generate_rankings(summary_df: pd.DataFrame) -> pd.DataFrame:
     return ranked
 
 
+def generate_status_coverage(metrics_df: pd.DataFrame) -> pd.DataFrame:
+    """Create reliability tables with attempted/ok/error counts and rates."""
+    test_rows = metrics_df[metrics_df["split"] == "test"].copy()
+    if test_rows.empty:
+        empty_cols = [
+            "dataset",
+            "experiment",
+            "condition_name",
+            "condition_value",
+            "model",
+            "attempted_runs",
+            "ok_runs",
+            "error_runs",
+            "ok_rate",
+            "error_rate",
+        ]
+        empty_df = pd.DataFrame(columns=empty_cols)
+        empty_df.to_csv(SUMMARY_OUT / "status_coverage_by_condition.csv", index=False)
+        empty_df.to_csv(SUMMARY_OUT / "status_coverage_by_model.csv", index=False)
+        return empty_df
+
+    test_rows["attempted_runs"] = 1
+    test_rows["ok_runs"] = (test_rows["status"] == "ok").astype(int)
+    test_rows["error_runs"] = (test_rows["status"] != "ok").astype(int)
+
+    coverage = (
+        test_rows.groupby(
+            ["dataset", "experiment", "condition_name", "condition_value", "model"],
+            as_index=False,
+        )
+        .agg(
+            attempted_runs=("attempted_runs", "sum"),
+            ok_runs=("ok_runs", "sum"),
+            error_runs=("error_runs", "sum"),
+        )
+        .sort_values(["dataset", "experiment", "condition_name", "condition_value", "model"])
+    )
+    coverage["ok_rate"] = np.where(
+        coverage["attempted_runs"] > 0,
+        coverage["ok_runs"] / coverage["attempted_runs"],
+        np.nan,
+    )
+    coverage["error_rate"] = np.where(
+        coverage["attempted_runs"] > 0,
+        coverage["error_runs"] / coverage["attempted_runs"],
+        np.nan,
+    )
+
+    coverage.to_csv(SUMMARY_OUT / "status_coverage_by_condition.csv", index=False)
+
+    by_model = (
+        coverage.groupby("model", as_index=False)
+        .agg(
+            attempted_runs=("attempted_runs", "sum"),
+            ok_runs=("ok_runs", "sum"),
+            error_runs=("error_runs", "sum"),
+        )
+        .sort_values("attempted_runs", ascending=False)
+    )
+    by_model["ok_rate"] = np.where(
+        by_model["attempted_runs"] > 0,
+        by_model["ok_runs"] / by_model["attempted_runs"],
+        np.nan,
+    )
+    by_model["error_rate"] = np.where(
+        by_model["attempted_runs"] > 0,
+        by_model["error_runs"] / by_model["attempted_runs"],
+        np.nan,
+    )
+    by_model.to_csv(SUMMARY_OUT / "status_coverage_by_model.csv", index=False)
+
+    return coverage
+
+
 def generate_runtime_table(metrics_df: pd.DataFrame) -> pd.DataFrame:
     """Create runtime comparison table from detailed test metrics."""
     test_ok = metrics_df[(metrics_df["split"] == "test") & (metrics_df["status"] == "ok")]
@@ -291,7 +365,7 @@ def generate_runtime_table(metrics_df: pd.DataFrame) -> pd.DataFrame:
             total_time_sec_mean=("total_time_sec", "mean"),
             total_time_sec_std=("total_time_sec", "std"),
             balanced_accuracy_mean=("balanced_accuracy", "mean"),
-            n_runs=("seed", "count"),
+            n_runs=("seed", "nunique"),
         )
         .sort_values(["dataset", "experiment", "condition_name", "condition_value", "model"])
     )
@@ -323,6 +397,26 @@ def _interpret_paired_result(
     return "not_significantly_different"
 
 
+def _holm_adjusted_pvalues(raw_p_values: list[float]) -> list[float]:
+    """Apply Holm correction while preserving original row order."""
+    if not raw_p_values:
+        return []
+
+    indexed = list(enumerate(raw_p_values))
+    indexed.sort(key=lambda item: item[1])
+
+    adjusted = [np.nan] * len(raw_p_values)
+    running_max = 0.0
+    m = len(raw_p_values)
+
+    for rank, (original_idx, p_val) in enumerate(indexed):
+        scaled = min(1.0, (m - rank) * float(p_val))
+        running_max = max(running_max, scaled)
+        adjusted[original_idx] = min(1.0, running_max)
+
+    return adjusted
+
+
 def generate_statistical_confidence(metrics_df: pd.DataFrame) -> pd.DataFrame:
     """Compute paired significance and confidence intervals vs condition winner."""
     test_ok = metrics_df[(metrics_df["split"] == "test") & (metrics_df["status"] == "ok")]
@@ -347,6 +441,9 @@ def generate_statistical_confidence(metrics_df: pd.DataFrame) -> pd.DataFrame:
             aggfunc="mean",
         )
 
+        holm_target_indices: list[int] = []
+        holm_raw_p_values: list[float] = []
+
         for _, model_row in model_means.iterrows():
             model = str(model_row["model"])
             model_mean = float(model_row["balanced_accuracy"])
@@ -365,7 +462,12 @@ def generate_statistical_confidence(metrics_df: pd.DataFrame) -> pd.DataFrame:
                         "mean_diff_vs_best": 0.0,
                         "ci95_low": 0.0,
                         "ci95_high": 0.0,
+                        "p_value_ttest": np.nan,
+                        "p_value_wilcoxon": np.nan,
+                        "p_value_raw": np.nan,
+                        "p_value_holm": np.nan,
                         "p_value": np.nan,
+                        "test_basis": "reference_best",
                         "n_common_seeds": int(pivot[best_model].dropna().shape[0]),
                         "interpretation": "reference_best",
                     }
@@ -386,7 +488,12 @@ def generate_statistical_confidence(metrics_df: pd.DataFrame) -> pd.DataFrame:
                         "mean_diff_vs_best": np.nan,
                         "ci95_low": np.nan,
                         "ci95_high": np.nan,
+                        "p_value_ttest": np.nan,
+                        "p_value_wilcoxon": np.nan,
+                        "p_value_raw": np.nan,
+                        "p_value_holm": np.nan,
                         "p_value": np.nan,
+                        "test_basis": "insufficient_data",
                         "n_common_seeds": 0,
                         "interpretation": "insufficient_data",
                     }
@@ -410,7 +517,12 @@ def generate_statistical_confidence(metrics_df: pd.DataFrame) -> pd.DataFrame:
                         "mean_diff_vs_best": np.nan,
                         "ci95_low": np.nan,
                         "ci95_high": np.nan,
+                        "p_value_ttest": np.nan,
+                        "p_value_wilcoxon": np.nan,
+                        "p_value_raw": np.nan,
+                        "p_value_holm": np.nan,
                         "p_value": np.nan,
+                        "test_basis": "insufficient_data",
                         "n_common_seeds": n_common,
                         "interpretation": "insufficient_data",
                     }
@@ -428,7 +540,31 @@ def generate_statistical_confidence(metrics_df: pd.DataFrame) -> pd.DataFrame:
                 paired[model].to_numpy(dtype=float),
                 paired[best_model].to_numpy(dtype=float),
             )
-            p_value = float(p_val) if np.isfinite(p_val) else np.nan
+            p_value_ttest = float(p_val) if np.isfinite(p_val) else np.nan
+
+            p_value_wilcoxon = np.nan
+            try:
+                _, p_wilcoxon = stats.wilcoxon(diffs)
+                if np.isfinite(p_wilcoxon):
+                    p_value_wilcoxon = float(p_wilcoxon)
+            except Exception:  # pragma: no cover - defensive numeric guard
+                p_value_wilcoxon = np.nan
+
+            p_value_raw = (
+                p_value_wilcoxon
+                if np.isfinite(p_value_wilcoxon)
+                else p_value_ttest
+            )
+            test_basis = (
+                "wilcoxon"
+                if np.isfinite(p_value_wilcoxon)
+                else "paired_ttest"
+            )
+
+            row_idx = len(rows)
+            if np.isfinite(p_value_raw):
+                holm_target_indices.append(row_idx)
+                holm_raw_p_values.append(float(p_value_raw))
 
             rows.append(
                 {
@@ -443,25 +579,81 @@ def generate_statistical_confidence(metrics_df: pd.DataFrame) -> pd.DataFrame:
                     "mean_diff_vs_best": mean_diff,
                     "ci95_low": ci_low,
                     "ci95_high": ci_high,
-                    "p_value": p_value,
+                    "p_value_ttest": p_value_ttest,
+                    "p_value_wilcoxon": p_value_wilcoxon,
+                    "p_value_raw": p_value_raw,
+                    "p_value_holm": np.nan,
+                    "p_value": np.nan,
+                    "test_basis": test_basis,
                     "n_common_seeds": n_common,
-                    "interpretation": _interpret_paired_result(ci_low, ci_high, p_value),
+                    "interpretation": "pending",
                 }
             )
 
-    significance = pd.DataFrame(rows).sort_values(
-        [
-            "dataset",
-            "experiment",
-            "condition_name",
-            "condition_value",
-            "model_mean",
-        ],
-        ascending=[True, True, True, True, False],
-    )
+        holm_adjusted = _holm_adjusted_pvalues(holm_raw_p_values)
+        for idx, adjusted_p in zip(
+            holm_target_indices,
+            holm_adjusted,
+            strict=True,
+        ):
+            rows[idx]["p_value_holm"] = float(adjusted_p)
+
+        for idx in holm_target_indices:
+            row = rows[idx]
+            p_for_interpretation = (
+                float(row["p_value_holm"])
+                if np.isfinite(row["p_value_holm"])
+                else float(row["p_value_raw"])
+            )
+            rows[idx]["p_value"] = p_for_interpretation
+            rows[idx]["test_basis"] = f"{row['test_basis']}_holm"
+            rows[idx]["interpretation"] = _interpret_paired_result(
+                float(row["ci95_low"]),
+                float(row["ci95_high"]),
+                p_for_interpretation,
+            )
+
+    if not rows:
+        significance = pd.DataFrame(
+            columns=[
+                "dataset",
+                "experiment",
+                "condition_name",
+                "condition_value",
+                "best_model",
+                "best_mean",
+                "model",
+                "model_mean",
+                "mean_diff_vs_best",
+                "ci95_low",
+                "ci95_high",
+                "p_value_ttest",
+                "p_value_wilcoxon",
+                "p_value_raw",
+                "p_value_holm",
+                "p_value",
+                "test_basis",
+                "n_common_seeds",
+                "interpretation",
+            ]
+        )
+    else:
+        significance = pd.DataFrame(rows).sort_values(
+            [
+                "dataset",
+                "experiment",
+                "condition_name",
+                "condition_value",
+                "model_mean",
+            ],
+            ascending=[True, True, True, True, False],
+        )
     significance.to_csv(SUMMARY_OUT / "statistical_confidence_vs_best.csv", index=False)
 
-    compare_only = significance[significance["interpretation"] != "reference_best"].copy()
+    compare_only = significance[
+        (significance["interpretation"] != "reference_best")
+        & (significance["interpretation"] != "insufficient_data")
+    ].copy()
     if compare_only.empty:
         summary_by_model = pd.DataFrame(
             columns=[
@@ -498,13 +690,17 @@ def generate_statistical_confidence(metrics_df: pd.DataFrame) -> pd.DataFrame:
     report_lines = [
         "# Statistical Confidence Interpretation",
         "",
-        "Paired t-tests compare each model against the best-mean model per condition.",
+        (
+            "Wilcoxon signed-rank p-values (fallback paired t-test) compare each "
+            "model against the best-mean model per condition."
+        ),
+        "Holm correction is applied within each condition across pairwise comparisons.",
         "95% CI is computed on paired seed-wise accuracy differences.",
         "",
     ]
 
     if summary_by_model.empty:
-        report_lines.append("No pairwise comparisons available.")
+        report_lines.append("No pairwise comparisons with sufficient data are available.")
     else:
         for _, row in summary_by_model.iterrows():
             report_lines.append(
@@ -1065,8 +1261,9 @@ def generate_claims(
     drop_df: pd.DataFrame,
     runtime_df: pd.DataFrame,
     significance_df: pd.DataFrame,
+    status_coverage_df: pd.DataFrame,
 ) -> None:
-    """Write three evidence-based claims for manuscript draft usage."""
+    """Write evidence-based claims for manuscript draft usage."""
     clean = summary_df[
         (summary_df["experiment"] == "baseline")
         & (summary_df["condition_name"] == "clean")
@@ -1130,13 +1327,26 @@ def generate_claims(
         )
     )
     hyperfast_runtime = clean_runtime[
-        clean_runtime["model"] == "hyperfast_default"
-    ][["dataset", "total_time_sec_mean"]].rename(
-        columns={"total_time_sec_mean": "hyperfast_total_time_sec"}
+        clean_runtime["model"].isin(["hyperfast_default", "hyperfast_tuned"])
+    ].copy()
+    best_hyperfast = (
+        hyperfast_runtime.sort_values(
+            ["dataset", "total_time_sec_mean"],
+            ascending=[True, True],
+        )
+        .groupby("dataset", as_index=False)
+        .head(1)
+        .rename(
+            columns={
+                "model": "best_hyperfast_model",
+                "total_time_sec_mean": "best_hyperfast_total_time_sec",
+            }
+        )
     )
-    speed_compare = fastest.merge(hyperfast_runtime, on="dataset", how="left")
-    speed_compare["hyperfast_vs_fastest_factor"] = (
-        speed_compare["hyperfast_total_time_sec"] / speed_compare["fastest_total_time_sec"]
+    speed_compare = fastest.merge(best_hyperfast, on="dataset", how="left")
+    speed_compare["best_hyperfast_vs_fastest_factor"] = (
+        speed_compare["best_hyperfast_total_time_sec"]
+        / speed_compare["fastest_total_time_sec"]
     )
 
     lines = ["# Evidence-Based Claims", ""]
@@ -1160,11 +1370,18 @@ def generate_claims(
             else "the strongest available corruption settings"
         )
 
+        if sig_total > 0:
+            sig_text = (
+                f"paired tests vs condition winners show {sig_worse}/{sig_total} "
+                f"significantly worse comparisons and {sig_not_diff}/{sig_total} "
+                "not-significant gaps"
+            )
+        else:
+            sig_text = "insufficient paired data prevented significance counting"
+
         lines.append(
             f"2. Under {robust_desc}, the largest mean performance drop is for "
-            f"{top_drop['model']} ({top_drop['drop_abs']:.4f}); paired tests vs "
-            f"condition winners show {sig_worse}/{sig_total} significantly worse "
-            f"comparisons and {sig_not_diff}/{sig_total} not-significant gaps."
+            f"{top_drop['model']} ({top_drop['drop_abs']:.4f}); {sig_text}."
         )
 
     if not speed_compare.empty:
@@ -1174,13 +1391,38 @@ def generate_claims(
                 for _, row in speed_compare.iterrows()
             ]
         )
-        factor_min = float(speed_compare["hyperfast_vs_fastest_factor"].min())
-        factor_max = float(speed_compare["hyperfast_vs_fastest_factor"].max())
+        factor_min = float(speed_compare["best_hyperfast_vs_fastest_factor"].min())
+        factor_max = float(speed_compare["best_hyperfast_vs_fastest_factor"].max())
         lines.append(
             "3. Clean runtime ranking favors: "
-            f"{fastest_desc}; in this setup, hyperfast_default is "
+            f"{fastest_desc}; in this setup, the fastest HyperFast variant is "
             f"{factor_min:.1f}x-{factor_max:.1f}x slower than the fastest "
             "model per dataset."
+        )
+
+    robust_status = status_coverage_df[
+        status_coverage_df["experiment"].isin(ROBUST_CLAIM_EXPERIMENTS)
+    ].copy()
+    if not robust_status.empty:
+        reliability = (
+            robust_status.groupby("model", as_index=False)
+            .agg(
+                attempted_runs=("attempted_runs", "sum"),
+                ok_runs=("ok_runs", "sum"),
+                error_runs=("error_runs", "sum"),
+                mean_error_rate=("error_rate", "mean"),
+                max_error_rate=("error_rate", "max"),
+            )
+            .sort_values("mean_error_rate", ascending=False)
+        )
+
+        highest_error = reliability.iloc[0]
+        lowest_error = reliability.iloc[-1]
+        lines.append(
+            "4. Reliability under robustness conditions: highest mean error rate is "
+            f"{highest_error['model']} ({highest_error['mean_error_rate']:.3f}, "
+            f"max={highest_error['max_error_rate']:.3f}); lowest is "
+            f"{lowest_error['model']} ({lowest_error['mean_error_rate']:.3f})."
         )
 
     REPORT_OUT.mkdir(parents=True, exist_ok=True)
@@ -1192,15 +1434,23 @@ def main() -> None:
     summary_df, metrics_df = _load_data()
     drop_df = generate_drop_table(summary_df)
     ranking_df = generate_rankings(summary_df)
+    status_coverage_df = generate_status_coverage(metrics_df)
     runtime_df = generate_runtime_table(metrics_df)
     significance_df = generate_statistical_confidence(metrics_df)
     _ = generate_condition_conclusions(ranking_df, significance_df)
     generate_plots(summary_df, runtime_df, drop_df)
     generate_failure_analysis(drop_df, metrics_df)
-    generate_claims(summary_df, drop_df, runtime_df, significance_df)
+    generate_claims(
+        summary_df,
+        drop_df,
+        runtime_df,
+        significance_df,
+        status_coverage_df,
+    )
 
     print(f"drop table: {(SUMMARY_OUT / 'performance_drop_vs_clean.csv').as_posix()}")
     print(f"rankings: {(SUMMARY_OUT / 'condition_wise_rankings.csv').as_posix()}")
+    print(f"status coverage: {(SUMMARY_OUT / 'status_coverage_by_condition.csv').as_posix()}")
     print(f"runtime table: {(SUMMARY_OUT / 'runtime_by_condition.csv').as_posix()}")
     print(
         "significance table: "
