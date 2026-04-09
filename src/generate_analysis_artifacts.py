@@ -503,6 +503,46 @@ def _effect_size_label(cohen_d: float) -> str:
     return "large"
 
 
+def _resolve_p_value_with_fallback(
+    diffs: np.ndarray,
+    p_value_wilcoxon: float,
+    p_value_ttest: float,
+) -> tuple[float, str]:
+    """Resolve paired-test p-value with robust fallback for degenerate cases."""
+    if np.isfinite(p_value_wilcoxon):
+        return float(p_value_wilcoxon), "wilcoxon"
+    if np.isfinite(p_value_ttest):
+        return float(p_value_ttest), "paired_ttest"
+
+    finite_diffs = diffs[np.isfinite(diffs)]
+    if finite_diffs.size == 0:
+        return np.nan, "insufficient_data"
+
+    # If all paired differences are numerically zero, treat as no detectable gap.
+    non_zero_diffs = finite_diffs[~np.isclose(finite_diffs, 0.0)]
+    if non_zero_diffs.size == 0:
+        return 1.0, "sign_test_fallback"
+
+    positive_count = int((non_zero_diffs > 0).sum())
+    trial_count = int(non_zero_diffs.size)
+    try:
+        sign_test = stats.binomtest(positive_count, n=trial_count, p=0.5)
+        return float(sign_test.pvalue), "sign_test_fallback"
+    except Exception:  # pragma: no cover - defensive numeric guard
+        return np.nan, "insufficient_data"
+
+
+def _safe_finite_float(value: Any) -> float | None:
+    """Convert a value to a finite float, or return None when not possible."""
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(parsed):
+        return None
+    return float(parsed)
+
+
 def generate_statistical_confidence(metrics_df: pd.DataFrame) -> pd.DataFrame:
     """Compute paired significance, CI, and effect size vs condition winner."""
     test_ok = metrics_df[(metrics_df["split"] == "test") & (metrics_df["status"] == "ok")]
@@ -638,9 +678,14 @@ def generate_statistical_confidence(metrics_df: pd.DataFrame) -> pd.DataFrame:
 
             p_value_wilcoxon = np.nan
             try:
-                _, p_wilcoxon = stats.wilcoxon(diffs)
-                if np.isfinite(p_wilcoxon):
-                    p_value_wilcoxon = float(p_wilcoxon)
+                wilcoxon_result = stats.wilcoxon(diffs)
+                p_wilcoxon = getattr(wilcoxon_result, "pvalue", None)
+                if p_wilcoxon is None and isinstance(wilcoxon_result, tuple):
+                    if len(wilcoxon_result) >= 2:
+                        p_wilcoxon = wilcoxon_result[1]
+                p_wilcoxon_float = _safe_finite_float(p_wilcoxon)
+                if p_wilcoxon_float is not None:
+                    p_value_wilcoxon = p_wilcoxon_float
             except Exception:  # pragma: no cover - defensive numeric guard
                 p_value_wilcoxon = np.nan
 
@@ -653,6 +698,12 @@ def generate_statistical_confidence(metrics_df: pd.DataFrame) -> pd.DataFrame:
                 "wilcoxon"
                 if np.isfinite(p_value_wilcoxon)
                 else "paired_ttest"
+            )
+
+            p_value_raw, test_basis = _resolve_p_value_with_fallback(
+                diffs=diffs,
+                p_value_wilcoxon=p_value_wilcoxon,
+                p_value_ttest=p_value_ttest,
             )
 
             row_idx = len(rows)
@@ -682,7 +733,9 @@ def generate_statistical_confidence(metrics_df: pd.DataFrame) -> pd.DataFrame:
                     "p_value": np.nan,
                     "test_basis": test_basis,
                     "n_common_seeds": n_common,
-                    "interpretation": "pending",
+                    "interpretation": (
+                        "pending" if np.isfinite(p_value_raw) else "insufficient_data"
+                    ),
                 }
             )
 
@@ -708,6 +761,14 @@ def generate_statistical_confidence(metrics_df: pd.DataFrame) -> pd.DataFrame:
                 float(row["ci95_high"]),
                 p_for_interpretation,
             )
+
+        # Safety net: unresolved pending rows are treated as insufficient_data.
+        for row in rows:
+            if row.get("interpretation") == "pending":
+                if np.isfinite(float(row.get("p_value_raw", np.nan))):
+                    continue
+                row["interpretation"] = "insufficient_data"
+                row["test_basis"] = "insufficient_data"
 
     if not rows:
         significance = pd.DataFrame(

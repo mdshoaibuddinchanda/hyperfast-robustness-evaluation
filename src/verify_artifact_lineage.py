@@ -237,6 +237,7 @@ def verify(project_root: Path) -> tuple[bool, list[dict[str, str]]]:
         calc_status["error_runs"] / calc_status["attempted_runs"],
         np.nan,
     )
+    calc_status = _normalize_condition_value(calc_status)
 
     file_status = _normalize_condition_value(
         pd.read_csv(summary_dir / "status_coverage_by_condition.csv")

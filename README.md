@@ -20,6 +20,8 @@ Default benchmark scope in this repository:
 
 - 10 tabular binary datasets (UCI)
 - 15 stratified seeds per dataset
+- 150 dataset-seed pairs in total
+- 1,950 condition evaluations in full comparison (13 conditions per pair)
 
 Primary metrics:
 
@@ -88,6 +90,13 @@ Reference dataset links:
 - <https://archive.ics.uci.edu/dataset/45/heart+disease>
 - <https://archive.ics.uci.edu/ml/datasets/Adult>
 - <https://archive.ics.uci.edu/ml/datasets/default+of+credit+card+clients>
+- <https://archive.ics.uci.edu/dataset/267/banknote+authentication>
+- <https://archive.ics.uci.edu/dataset/17/breast+cancer+wisconsin+diagnostic>
+- <https://archive.ics.uci.edu/dataset/43/haberman+s+survival>
+- <https://archive.ics.uci.edu/dataset/52/ionosphere>
+- <https://archive.ics.uci.edu/dataset/73/mushroom>
+- <https://archive.ics.uci.edu/dataset/34/diabetes>
+- <https://archive.ics.uci.edu/dataset/151/connectionist+bench+sonar+mines+vs+rocks>
 
 ## Commands (End-to-End)
 
@@ -165,6 +174,47 @@ python src/verify_artifact_lineage.py
 ```powershell
 python src/validate_research_integrity.py
 ```
+
+## Scope Audit (Source Of Truth)
+
+Use these files as the canonical configuration points:
+
+- `configs/split_config.json`: active dataset list and active seed list used by `run_full_comparison.py`.
+- `configs/baseline.json`: baseline experiment metadata and expected model set.
+- `configs/reduced_data_experiment.json`: reduced-data fraction grid and seed metadata.
+- `configs/analysis_artifacts.json`: dataset ordering/labels and plot/report configuration.
+- `src/data_loading.py`: supported dataset loaders and static dataset specs.
+- `src/run_all_in_one_pipeline.py`: auto-download mapping for required raw dataset files.
+
+Current audited defaults:
+
+- Datasets: 10
+- Seeds: 15
+- Models: HyperFast default, HyperFast tuned, Logistic Regression, Random Forest
+- Robustness experiments: noise, missingness, reduced_data
+
+## Avoid Breakage Checklist
+
+Before a long run:
+
+- Confirm environment health: `python -m pip check`
+- Confirm key scripts compile: `python -m py_compile src/*.py`
+- Confirm GPU visibility: `python -c "import torch; print(torch.cuda.is_available(), torch.version.cuda)"`
+
+For Kaggle/Colab GPU runs:
+
+- P100: use `--optimize-p100-torch` to install CUDA 11.8-compatible torch stack.
+- T4/A100/L4: standard pinned environment is usually sufficient.
+- If you see `GPU baselines requested but RAPIDS/cuML is not available`, install RAPIDS or expect CPU baseline fallback.
+
+If all-in-one fails only in final validation (after long run completes):
+
+- Re-run just final stages first:
+- `python src/generate_analysis_artifacts.py`
+- `python src/verify_artifact_lineage.py`
+- `python src/validate_research_integrity.py`
+
+This avoids re-running the full benchmark when only report-integrity artifacts need refresh.
 
 ## What Gets Generated (Local)
 
