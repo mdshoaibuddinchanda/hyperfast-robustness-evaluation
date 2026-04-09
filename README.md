@@ -48,13 +48,24 @@ All of these are excluded in `.gitignore`.
 
 ## Environment Setup
 
-Use conda for environment management and install Python packages from `requirements.txt`.
+Use conda for environment management.
+
+Option A (recommended): create from `environment.yml`.
+
+```powershell
+conda env create -f environment.yml
+conda activate hyperfast-robustness
+```
+
+Option B: create manually and install from `requirements.txt`.
 
 ```powershell
 conda create -n hyperfast-robustness python=3.12 -y
 conda activate hyperfast-robustness
 uv pip install -r requirements.txt
 ```
+
+`requirements.txt` and `environment.yml` are kept in sync for the same package set.
 
 ## Data Setup (Local Only)
 
@@ -90,6 +101,12 @@ GPU-accelerated baseline mode (RAPIDS/cuML) for Colab/T4:
 
 ```powershell
 python src/run_all_in_one_pipeline.py --use-gpu-baselines
+```
+
+Colab P100 optimized mode (installs CUDA 11.8 Torch stack automatically):
+
+```powershell
+python src/run_all_in_one_pipeline.py --use-gpu-baselines --optimize-p100-torch
 ```
 
 Colab RAPIDS install snippet (run before benchmark command):

@@ -2,10 +2,9 @@ name: hyperfast-robustness
 channels:
   - conda-forge
 dependencies:
-  - python=3.13
+  - python=3.12
   - pip
   - pip:
-      - --extra-index-url https://download.pytorch.org/whl/cu128
       - hyperfast==1.0.6
       - matplotlib==3.10.8
       - numpy==2.4.3
@@ -13,7 +12,7 @@ dependencies:
       - scikit-learn==1.6.1
       - scipy==1.17.1
       - seaborn==0.13.2
-      - torch==2.11.0+cu128
-      - torchvision==0.26.0+cu128
-      - torchaudio==2.11.0+cu128
+      - torch==2.11.0
+      - torchvision==0.26.0
+      - torchaudio==2.11.0
       - xlrd==2.0.1
