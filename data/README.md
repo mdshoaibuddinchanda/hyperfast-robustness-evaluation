@@ -28,6 +28,41 @@ This folder stores benchmark datasets selected for the paper.
 - Extracted folder: data/raw/credit_default
 - Main file: data/raw/credit_default/default of credit card clients.xls
 
+1. Banknote Authentication (UCI)
+
+- Extracted folder: data/raw/banknote_authentication
+- Main file: data/raw/banknote_authentication/data_banknote_authentication.txt
+
+1. Breast Cancer Wisconsin (Diagnostic, UCI)
+
+- Extracted folder: data/raw/breast_cancer_wisconsin_diagnostic
+- Main file: data/raw/breast_cancer_wisconsin_diagnostic/wdbc.data
+
+1. Haberman Survival (UCI)
+
+- Extracted folder: data/raw/haberman_survival
+- Main file: data/raw/haberman_survival/haberman.data
+
+1. Ionosphere (UCI)
+
+- Extracted folder: data/raw/ionosphere
+- Main file: data/raw/ionosphere/ionosphere.data
+
+1. Mushroom (UCI)
+
+- Extracted folder: data/raw/mushroom
+- Main file: data/raw/mushroom/agaricus-lepiota.data
+
+1. Pima Diabetes (UCI)
+
+- Extracted folder: data/raw/pima_diabetes
+- Main file: data/raw/pima_diabetes/pima-indians-diabetes.data
+
+1. Sonar Mines vs Rocks (UCI)
+
+- Extracted folder: data/raw/sonar_mines_rocks
+- Main file: data/raw/sonar_mines_rocks/sonar.all-data
+
 ## Notes
 
 - Keep files in data/archives unchanged for reproducibility.

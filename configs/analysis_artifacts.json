@@ -1,11 +1,29 @@
 {
   "figure_dpi": 300,
   "export_formats": ["png", "pdf"],
-  "dataset_order": ["adult_income", "credit_default", "heart_disease"],
+  "dataset_order": [
+    "adult_income",
+    "banknote_authentication",
+    "breast_cancer_wisconsin_diagnostic",
+    "credit_default",
+    "haberman_survival",
+    "heart_disease",
+    "ionosphere",
+    "mushroom",
+    "pima_diabetes",
+    "sonar_mines_rocks"
+  ],
   "dataset_labels": {
     "adult_income": "Adult Income",
+    "banknote_authentication": "Banknote Authentication",
+    "breast_cancer_wisconsin_diagnostic": "Breast Cancer Wisconsin (Diagnostic)",
     "credit_default": "Credit Default",
-    "heart_disease": "Heart Disease"
+    "haberman_survival": "Haberman Survival",
+    "heart_disease": "Heart Disease",
+    "ionosphere": "Ionosphere",
+    "mushroom": "Mushroom",
+    "pima_diabetes": "Pima Diabetes",
+    "sonar_mines_rocks": "Sonar Mines vs Rocks"
   },
   "model_order": [
     "hyperfast_default",

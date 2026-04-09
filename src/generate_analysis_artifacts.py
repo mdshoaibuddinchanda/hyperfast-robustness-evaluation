@@ -382,6 +382,67 @@ def generate_runtime_table(metrics_df: pd.DataFrame) -> pd.DataFrame:
     return runtime
 
 
+def generate_efficiency_tradeoff(runtime_df: pd.DataFrame) -> pd.DataFrame:
+    """Create an accuracy-vs-inference-cost tradeoff score table."""
+    tradeoff = runtime_df.copy()
+    group_cols = ["dataset", "experiment", "condition_name", "condition_value"]
+
+    tradeoff["best_accuracy_in_group"] = tradeoff.groupby(group_cols)[
+        "balanced_accuracy_mean"
+    ].transform("max")
+    tradeoff["fastest_predict_time_sec_in_group"] = tradeoff.groupby(group_cols)[
+        "predict_time_sec_mean"
+    ].transform("min")
+
+    tradeoff["accuracy_ratio"] = np.where(
+        tradeoff["best_accuracy_in_group"] > 0,
+        tradeoff["balanced_accuracy_mean"] / tradeoff["best_accuracy_in_group"],
+        np.nan,
+    )
+    tradeoff["inference_efficiency_ratio"] = np.where(
+        tradeoff["predict_time_sec_mean"] > 0,
+        tradeoff["fastest_predict_time_sec_in_group"]
+        / tradeoff["predict_time_sec_mean"],
+        np.nan,
+    )
+
+    raw_score = tradeoff["accuracy_ratio"] * tradeoff["inference_efficiency_ratio"]
+    raw_score = raw_score.clip(lower=0.0)
+    tradeoff["accuracy_inference_tradeoff_score"] = np.sqrt(raw_score)
+
+    tradeoff = tradeoff.sort_values(
+        [
+            "dataset",
+            "experiment",
+            "condition_name",
+            "condition_value",
+            "accuracy_inference_tradeoff_score",
+        ],
+        ascending=[True, True, True, True, False],
+    )
+    tradeoff.to_csv(SUMMARY_OUT / "accuracy_inference_tradeoff.csv", index=False)
+
+    by_model = (
+        tradeoff.groupby("model", as_index=False)
+        .agg(
+            mean_tradeoff_score=("accuracy_inference_tradeoff_score", "mean"),
+            median_tradeoff_score=("accuracy_inference_tradeoff_score", "median"),
+            q25_tradeoff_score=(
+                "accuracy_inference_tradeoff_score",
+                lambda s: float(np.nanpercentile(s, 25)),
+            ),
+            q75_tradeoff_score=(
+                "accuracy_inference_tradeoff_score",
+                lambda s: float(np.nanpercentile(s, 75)),
+            ),
+        )
+        .sort_values("mean_tradeoff_score", ascending=False)
+    )
+    by_model.to_csv(SUMMARY_OUT / "accuracy_inference_tradeoff_by_model.csv", index=False)
+
+    return tradeoff
+
+
 def _interpret_paired_result(
     ci_low: float,
     ci_high: float,
@@ -417,8 +478,33 @@ def _holm_adjusted_pvalues(raw_p_values: list[float]) -> list[float]:
     return adjusted
 
 
+def _cohen_d_paired(diffs: np.ndarray) -> float:
+    """Compute paired-sample Cohen's d from seed-wise differences."""
+    std_diff = float(np.std(diffs, ddof=1))
+    mean_diff = float(np.mean(diffs))
+    if np.isclose(std_diff, 0.0):
+        if np.isclose(mean_diff, 0.0):
+            return 0.0
+        return float(np.sign(mean_diff) * np.inf)
+    return mean_diff / std_diff
+
+
+def _effect_size_label(cohen_d: float) -> str:
+    """Map |d| to conventional effect-size buckets."""
+    if not np.isfinite(cohen_d):
+        return "large"
+    abs_d = abs(float(cohen_d))
+    if abs_d < 0.2:
+        return "negligible"
+    if abs_d < 0.5:
+        return "small"
+    if abs_d < 0.8:
+        return "medium"
+    return "large"
+
+
 def generate_statistical_confidence(metrics_df: pd.DataFrame) -> pd.DataFrame:
-    """Compute paired significance and confidence intervals vs condition winner."""
+    """Compute paired significance, CI, and effect size vs condition winner."""
     test_ok = metrics_df[(metrics_df["split"] == "test") & (metrics_df["status"] == "ok")]
 
     rows: list[dict[str, Any]] = []
@@ -460,6 +546,8 @@ def generate_statistical_confidence(metrics_df: pd.DataFrame) -> pd.DataFrame:
                         "model": model,
                         "model_mean": model_mean,
                         "mean_diff_vs_best": 0.0,
+                        "cohen_d_vs_best": 0.0,
+                        "effect_size": "reference_best",
                         "ci95_low": 0.0,
                         "ci95_high": 0.0,
                         "p_value_ttest": np.nan,
@@ -486,6 +574,8 @@ def generate_statistical_confidence(metrics_df: pd.DataFrame) -> pd.DataFrame:
                         "model": model,
                         "model_mean": model_mean,
                         "mean_diff_vs_best": np.nan,
+                        "cohen_d_vs_best": np.nan,
+                        "effect_size": "insufficient_data",
                         "ci95_low": np.nan,
                         "ci95_high": np.nan,
                         "p_value_ttest": np.nan,
@@ -515,6 +605,8 @@ def generate_statistical_confidence(metrics_df: pd.DataFrame) -> pd.DataFrame:
                         "model": model,
                         "model_mean": model_mean,
                         "mean_diff_vs_best": np.nan,
+                        "cohen_d_vs_best": np.nan,
+                        "effect_size": "insufficient_data",
                         "ci95_low": np.nan,
                         "ci95_high": np.nan,
                         "p_value_ttest": np.nan,
@@ -536,6 +628,8 @@ def generate_statistical_confidence(metrics_df: pd.DataFrame) -> pd.DataFrame:
             t_crit = float(stats.t.ppf(0.975, n_common - 1))
             ci_low = mean_diff - t_crit * se_diff
             ci_high = mean_diff + t_crit * se_diff
+            cohen_d = _cohen_d_paired(diffs)
+            effect_size = _effect_size_label(cohen_d)
             _, p_val = stats.ttest_rel(
                 paired[model].to_numpy(dtype=float),
                 paired[best_model].to_numpy(dtype=float),
@@ -577,6 +671,8 @@ def generate_statistical_confidence(metrics_df: pd.DataFrame) -> pd.DataFrame:
                     "model": model,
                     "model_mean": model_mean,
                     "mean_diff_vs_best": mean_diff,
+                    "cohen_d_vs_best": cohen_d,
+                    "effect_size": effect_size,
                     "ci95_low": ci_low,
                     "ci95_high": ci_high,
                     "p_value_ttest": p_value_ttest,
@@ -625,6 +721,8 @@ def generate_statistical_confidence(metrics_df: pd.DataFrame) -> pd.DataFrame:
                 "model",
                 "model_mean",
                 "mean_diff_vs_best",
+                "cohen_d_vs_best",
+                "effect_size",
                 "ci95_low",
                 "ci95_high",
                 "p_value_ttest",
@@ -682,6 +780,8 @@ def generate_statistical_confidence(metrics_df: pd.DataFrame) -> pd.DataFrame:
                 significantly_worse_count=("sig_worse", "sum"),
                 not_significantly_different_count=("not_sig_diff", "sum"),
                 significantly_better_count=("sig_better", "sum"),
+                mean_abs_cohen_d=("cohen_d_vs_best", lambda s: float(np.nanmean(np.abs(s)))),
+                large_effect_count=("effect_size", lambda s: int((s == "large").sum())),
             )
             .sort_values("n_conditions", ascending=False)
         )
@@ -695,7 +795,7 @@ def generate_statistical_confidence(metrics_df: pd.DataFrame) -> pd.DataFrame:
             "model against the best-mean model per condition."
         ),
         "Holm correction is applied within each condition across pairwise comparisons.",
-        "95% CI is computed on paired seed-wise accuracy differences.",
+        "95% CI and paired-sample Cohen's d are computed on seed-wise differences.",
         "",
     ]
 
@@ -709,7 +809,9 @@ def generate_statistical_confidence(metrics_df: pd.DataFrame) -> pd.DataFrame:
                 f"n={int(row['n_conditions'])}, "
                 f"significantly_worse={int(row['significantly_worse_count'])}, "
                 f"not_significant={int(row['not_significantly_different_count'])}, "
-                f"significantly_better={int(row['significantly_better_count'])}."
+                f"significantly_better={int(row['significantly_better_count'])}, "
+                f"mean_abs_cohen_d={float(row['mean_abs_cohen_d']):.3f}, "
+                f"large_effects={int(row['large_effect_count'])}."
             )
 
     REPORT_OUT.mkdir(parents=True, exist_ok=True)
@@ -1269,6 +1371,7 @@ def generate_claims(
     runtime_df: pd.DataFrame,
     significance_df: pd.DataFrame,
     status_coverage_df: pd.DataFrame,
+    tradeoff_df: pd.DataFrame,
 ) -> None:
     """Write evidence-based claims for manuscript draft usage."""
     clean = summary_df[
@@ -1407,6 +1510,56 @@ def generate_claims(
             "model per dataset."
         )
 
+    clean_tradeoff = tradeoff_df[
+        (tradeoff_df["experiment"] == "baseline")
+        & (tradeoff_df["condition_name"] == "clean")
+        & (tradeoff_df["condition_value"].astype(str) == "clean")
+    ].copy()
+    if not clean_tradeoff.empty:
+        classical = clean_tradeoff[
+            clean_tradeoff["model"].isin(["logistic_regression", "random_forest"])
+        ].copy()
+        hyperfast = clean_tradeoff[
+            clean_tradeoff["model"].isin(["hyperfast_default", "hyperfast_tuned"])
+        ].copy()
+
+        best_classical = (
+            classical.sort_values(
+                ["dataset", "accuracy_inference_tradeoff_score"],
+                ascending=[True, False],
+            )
+            .groupby("dataset", as_index=False)
+            .head(1)
+            .rename(columns={"accuracy_inference_tradeoff_score": "classical_score"})
+        )
+        best_hyperfast = (
+            hyperfast.sort_values(
+                ["dataset", "accuracy_inference_tradeoff_score"],
+                ascending=[True, False],
+            )
+            .groupby("dataset", as_index=False)
+            .head(1)
+            .rename(columns={"accuracy_inference_tradeoff_score": "hyperfast_score"})
+        )
+        merged_tradeoff = best_hyperfast.merge(
+            best_classical[["dataset", "classical_score"]],
+            on="dataset",
+            how="inner",
+        )
+        if not merged_tradeoff.empty:
+            merged_tradeoff["score_ratio"] = (
+                merged_tradeoff["hyperfast_score"]
+                / merged_tradeoff["classical_score"]
+            )
+            ratio_min = float(merged_tradeoff["score_ratio"].min())
+            ratio_max = float(merged_tradeoff["score_ratio"].max())
+            lines.append(
+                "4. Training-free does not mean deployment-free: under the "
+                "accuracy-vs-inference-cost score, the best HyperFast variant "
+                f"achieves only {ratio_min:.2f}x-{ratio_max:.2f}x of the best "
+                "classical model score across datasets."
+            )
+
     robust_status = status_coverage_df[
         status_coverage_df["experiment"].isin(ROBUST_CLAIM_EXPERIMENTS)
     ].copy()
@@ -1426,7 +1579,7 @@ def generate_claims(
         highest_error = reliability.iloc[0]
         lowest_error = reliability.iloc[-1]
         lines.append(
-            "4. Reliability under robustness conditions: highest mean error rate is "
+            "5. Reliability under robustness conditions: highest mean error rate is "
             f"{highest_error['model']} ({highest_error['mean_error_rate']:.3f}, "
             f"max={highest_error['max_error_rate']:.3f}); lowest is "
             f"{lowest_error['model']} ({lowest_error['mean_error_rate']:.3f})."
@@ -1443,6 +1596,7 @@ def main() -> None:
     ranking_df = generate_rankings(summary_df)
     status_coverage_df = generate_status_coverage(metrics_df)
     runtime_df = generate_runtime_table(metrics_df)
+    tradeoff_df = generate_efficiency_tradeoff(runtime_df)
     significance_df = generate_statistical_confidence(metrics_df)
     _ = generate_condition_conclusions(ranking_df, significance_df)
     generate_plots(summary_df, runtime_df, drop_df)
@@ -1453,12 +1607,17 @@ def main() -> None:
         runtime_df,
         significance_df,
         status_coverage_df,
+        tradeoff_df,
     )
 
     print(f"drop table: {(SUMMARY_OUT / 'performance_drop_vs_clean.csv').as_posix()}")
     print(f"rankings: {(SUMMARY_OUT / 'condition_wise_rankings.csv').as_posix()}")
     print(f"status coverage: {(SUMMARY_OUT / 'status_coverage_by_condition.csv').as_posix()}")
     print(f"runtime table: {(SUMMARY_OUT / 'runtime_by_condition.csv').as_posix()}")
+    print(
+        "tradeoff table: "
+        f"{(SUMMARY_OUT / 'accuracy_inference_tradeoff.csv').as_posix()}"
+    )
     print(
         "significance table: "
         f"{(SUMMARY_OUT / 'statistical_confidence_vs_best.csv').as_posix()}"

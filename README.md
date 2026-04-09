@@ -1,6 +1,8 @@
-# HyperFast Robustness Benchmark (Tabular Classification)
+# Training-Free Does Not Mean Free: A Robustness and Efficiency Study of HyperFast
 
-A reproducible evaluation of training-free tabular models (HyperFast) under real-world conditions including noise, missing data, and limited training regimes.
+A reproducible evaluation of training-free tabular models (HyperFast) under
+real-world conditions including noise, missing data, and limited training
+regimes.
 
 This repository runs a reproducible robustness benchmark for tabular binary classification using:
 
@@ -14,7 +16,15 @@ Robustness is evaluated under:
 - MCAR missingness
 - Reduced training data fractions
 
-Primary metric: balanced accuracy.
+Default benchmark scope in this repository:
+
+- 10 tabular binary datasets (UCI)
+- 20 stratified seeds per dataset
+
+Primary metrics:
+
+- Balanced accuracy
+- Accuracy-vs-inference-cost tradeoff score
 
 ## Reproducibility Policy
 
@@ -48,11 +58,19 @@ uv pip install -r requirements.txt
 
 ## Data Setup (Local Only)
 
-Place dataset files locally under `data/raw/`:
+Place dataset files locally under `data/raw/` (or use the all-in-one runner
+with auto-download enabled):
 
 - Heart Disease: `data/raw/heart_disease/processed.cleveland.data`
 - Adult Income: `data/raw/adult_income/adult.data`
 - Credit Default: `data/raw/credit_default/default of credit card clients.xls`
+- Banknote Authentication: `data/raw/banknote_authentication/data_banknote_authentication.txt`
+- Breast Cancer Wisconsin (Diagnostic): `data/raw/breast_cancer_wisconsin_diagnostic/wdbc.data`
+- Haberman Survival: `data/raw/haberman_survival/haberman.data`
+- Ionosphere: `data/raw/ionosphere/ionosphere.data`
+- Mushroom: `data/raw/mushroom/agaricus-lepiota.data`
+- Pima Diabetes: `data/raw/pima_diabetes/pima-indians-diabetes.data`
+- Sonar Mines vs Rocks: `data/raw/sonar_mines_rocks/sonar.all-data`
 
 Reference dataset links:
 
@@ -61,6 +79,12 @@ Reference dataset links:
 - <https://archive.ics.uci.edu/ml/datasets/default+of+credit+card+clients>
 
 ## Commands (End-to-End)
+
+Recommended one-command full run (checks/downloads/splits/benchmark/analysis):
+
+```powershell
+python src/run_all_in_one_pipeline.py
+```
 
 1) Download HyperFast checkpoint (local file `hyperfast.ckpt`):
 
@@ -125,7 +149,7 @@ reporting:
   evaluated.
 - Reliability tables report attempted/ok/error runs per condition and model.
 - Statistical tables include Wilcoxon or paired t-test p-values with Holm
-  correction.
+  correction, paired 95% confidence intervals, and Cohen's d effect sizes.
 - Lineage checks verify consistency from raw run artifacts to summary tables and
   plot source data.
 

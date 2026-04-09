@@ -90,14 +90,72 @@ DATASET_SPECS: dict[str, DatasetSpec] = {
         target_column=CREDIT_TARGET_COLUMN,
         notes="Default target is already binary in the original file.",
     ),
+    "banknote_authentication": DatasetSpec(
+        name="banknote_authentication",
+        source_url="https://archive.ics.uci.edu/dataset/267/banknote+authentication",
+        folder="banknote_authentication",
+        canonical_file="data_banknote_authentication.txt",
+        target_column="class",
+        notes="Binary target is encoded as 0/1 in source data.",
+    ),
+    "breast_cancer_wisconsin_diagnostic": DatasetSpec(
+        name="breast_cancer_wisconsin_diagnostic",
+        source_url="https://archive.ics.uci.edu/dataset/17/breast+cancer+wisconsin+diagnostic",
+        folder="breast_cancer_wisconsin_diagnostic",
+        canonical_file="wdbc.data",
+        target_column="diagnosis",
+        notes="Binary target M/B converted to 1/0.",
+    ),
+    "haberman_survival": DatasetSpec(
+        name="haberman_survival",
+        source_url="https://archive.ics.uci.edu/dataset/43/haberman+s+survival",
+        folder="haberman_survival",
+        canonical_file="haberman.data",
+        target_column="survival_status",
+        notes="Target 2 (died within 5 years) is mapped to positive class.",
+    ),
+    "ionosphere": DatasetSpec(
+        name="ionosphere",
+        source_url="https://archive.ics.uci.edu/dataset/52/ionosphere",
+        folder="ionosphere",
+        canonical_file="ionosphere.data",
+        target_column="class",
+        notes="Labels g/b converted to 1/0.",
+    ),
+    "mushroom": DatasetSpec(
+        name="mushroom",
+        source_url="https://archive.ics.uci.edu/dataset/73/mushroom",
+        folder="mushroom",
+        canonical_file="agaricus-lepiota.data",
+        target_column="class",
+        notes="Poisonous/edible labels p/e converted to 1/0.",
+    ),
+    "pima_diabetes": DatasetSpec(
+        name="pima_diabetes",
+        source_url="https://archive.ics.uci.edu/dataset/34/diabetes",
+        folder="pima_diabetes",
+        canonical_file="pima-indians-diabetes.data",
+        target_column="outcome",
+        notes="Binary target is encoded as 0/1 in source data.",
+    ),
+    "sonar_mines_rocks": DatasetSpec(
+        name="sonar_mines_rocks",
+        source_url="https://archive.ics.uci.edu/dataset/151/connectionist+bench+sonar+mines+vs+rocks",
+        folder="sonar_mines_rocks",
+        canonical_file="sonar.all-data",
+        target_column="class",
+        notes="Labels M/R converted to 1/0.",
+    ),
 }
 
 
 def _strip_object_columns(frame: pd.DataFrame) -> pd.DataFrame:
     """Trim whitespace from object columns in-place and return frame."""
-    object_columns = frame.select_dtypes(include=["object"]).columns.tolist()
+    object_columns = frame.select_dtypes(include=["object", "string"]).columns.tolist()
     for column in object_columns:
-        frame[column] = frame[column].astype(str).str.strip()
+        frame[column] = frame[column].map(
+            lambda value: value.strip() if isinstance(value, str) else value
+        )
     return frame
 
 
@@ -160,6 +218,109 @@ def load_credit_default(
     return features, labels
 
 
+def load_banknote_authentication(
+    data_root: Path = RAW_DATA_ROOT,
+) -> tuple[pd.DataFrame, pd.Series]:
+    """Load UCI Banknote Authentication (binary target in final column)."""
+    path = data_root / "banknote_authentication" / "data_banknote_authentication.txt"
+    columns = ["variance", "skewness", "curtosis", "entropy", "class"]
+    frame = pd.read_csv(path, header=None, names=columns)
+
+    labels = pd.to_numeric(frame["class"], errors="raise").astype(int)
+    features = frame.drop(columns=["class"])
+    return features, labels
+
+
+def load_breast_cancer_wisconsin_diagnostic(
+    data_root: Path = RAW_DATA_ROOT,
+) -> tuple[pd.DataFrame, pd.Series]:
+    """Load UCI Breast Cancer Wisconsin (Diagnostic)."""
+    path = data_root / "breast_cancer_wisconsin_diagnostic" / "wdbc.data"
+    frame = pd.read_csv(path, header=None)
+
+    labels = (frame.iloc[:, 1].astype(str).str.strip() == "M").astype(int)
+    features = frame.iloc[:, 2:].copy()
+    features.columns = [f"feature_{idx + 1}" for idx in range(features.shape[1])]
+    features = features.apply(pd.to_numeric, errors="coerce")
+    return features, labels
+
+
+def load_haberman_survival(
+    data_root: Path = RAW_DATA_ROOT,
+) -> tuple[pd.DataFrame, pd.Series]:
+    """Load UCI Haberman's Survival dataset."""
+    path = data_root / "haberman_survival" / "haberman.data"
+    columns = ["age", "operation_year", "positive_aux_nodes", "survival_status"]
+    frame = pd.read_csv(path, header=None, names=columns)
+
+    labels = (pd.to_numeric(frame["survival_status"], errors="raise") == 2).astype(int)
+    features = frame.drop(columns=["survival_status"])
+    return features, labels
+
+
+def load_ionosphere(
+    data_root: Path = RAW_DATA_ROOT,
+) -> tuple[pd.DataFrame, pd.Series]:
+    """Load UCI Ionosphere with g/b target mapping."""
+    path = data_root / "ionosphere" / "ionosphere.data"
+    frame = pd.read_csv(path, header=None)
+
+    labels = (frame.iloc[:, -1].astype(str).str.strip() == "g").astype(int)
+    features = frame.iloc[:, :-1].apply(pd.to_numeric, errors="coerce")
+    features.columns = [f"feature_{idx + 1}" for idx in range(features.shape[1])]
+    return features, labels
+
+
+def load_mushroom(
+    data_root: Path = RAW_DATA_ROOT,
+) -> tuple[pd.DataFrame, pd.Series]:
+    """Load UCI Mushroom with poisonous/edible label mapping."""
+    path = data_root / "mushroom" / "agaricus-lepiota.data"
+    frame = pd.read_csv(path, header=None, na_values="?")
+    frame = _strip_object_columns(frame)
+
+    labels = (frame.iloc[:, 0].astype(str).str.strip() == "p").astype(int)
+    features = frame.iloc[:, 1:].copy()
+    features.columns = [f"feature_{idx + 1}" for idx in range(features.shape[1])]
+    return features, labels
+
+
+def load_pima_diabetes(
+    data_root: Path = RAW_DATA_ROOT,
+) -> tuple[pd.DataFrame, pd.Series]:
+    """Load UCI Pima Indians Diabetes dataset."""
+    path = data_root / "pima_diabetes" / "pima-indians-diabetes.data"
+    columns = [
+        "pregnancies",
+        "glucose",
+        "blood_pressure",
+        "skin_thickness",
+        "insulin",
+        "bmi",
+        "diabetes_pedigree_function",
+        "age",
+        "outcome",
+    ]
+    frame = pd.read_csv(path, header=None, names=columns)
+
+    labels = pd.to_numeric(frame["outcome"], errors="raise").astype(int)
+    features = frame.drop(columns=["outcome"])
+    return features, labels
+
+
+def load_sonar_mines_rocks(
+    data_root: Path = RAW_DATA_ROOT,
+) -> tuple[pd.DataFrame, pd.Series]:
+    """Load UCI Sonar with mine/rock target mapping."""
+    path = data_root / "sonar_mines_rocks" / "sonar.all-data"
+    frame = pd.read_csv(path, header=None)
+
+    labels = (frame.iloc[:, -1].astype(str).str.strip() == "M").astype(int)
+    features = frame.iloc[:, :-1].apply(pd.to_numeric, errors="coerce")
+    features.columns = [f"feature_{idx + 1}" for idx in range(features.shape[1])]
+    return features, labels
+
+
 def get_feature_types(features: pd.DataFrame) -> dict[str, list[str]]:
     """Infer numeric and categorical columns from dataframe dtypes."""
     numeric_columns = [
@@ -186,6 +347,13 @@ def load_dataset(
         "heart_disease": load_heart_disease,
         "adult_income": load_adult_income,
         "credit_default": load_credit_default,
+        "banknote_authentication": load_banknote_authentication,
+        "breast_cancer_wisconsin_diagnostic": load_breast_cancer_wisconsin_diagnostic,
+        "haberman_survival": load_haberman_survival,
+        "ionosphere": load_ionosphere,
+        "mushroom": load_mushroom,
+        "pima_diabetes": load_pima_diabetes,
+        "sonar_mines_rocks": load_sonar_mines_rocks,
     }
 
     if dataset_name not in loader_map:

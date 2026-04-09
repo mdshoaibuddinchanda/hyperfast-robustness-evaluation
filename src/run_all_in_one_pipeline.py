@@ -60,6 +60,36 @@ DATA_SOURCES: dict[Path, str] = {
         "https://archive.ics.uci.edu/ml/machine-learning-databases/"
         "00350/default%20of%20credit%20card%20clients.xls"
     ),
+    RAW_ROOT / "banknote_authentication" / "data_banknote_authentication.txt": (
+        "https://archive.ics.uci.edu/ml/machine-learning-databases/"
+        "00267/data_banknote_authentication.txt"
+    ),
+    RAW_ROOT
+    / "breast_cancer_wisconsin_diagnostic"
+    / "wdbc.data": (
+        "https://archive.ics.uci.edu/ml/machine-learning-databases/"
+        "breast-cancer-wisconsin/wdbc.data"
+    ),
+    RAW_ROOT / "haberman_survival" / "haberman.data": (
+        "https://archive.ics.uci.edu/ml/machine-learning-databases/"
+        "haberman/haberman.data"
+    ),
+    RAW_ROOT / "ionosphere" / "ionosphere.data": (
+        "https://archive.ics.uci.edu/ml/machine-learning-databases/"
+        "ionosphere/ionosphere.data"
+    ),
+    RAW_ROOT / "mushroom" / "agaricus-lepiota.data": (
+        "https://archive.ics.uci.edu/ml/machine-learning-databases/"
+        "mushroom/agaricus-lepiota.data"
+    ),
+    RAW_ROOT / "pima_diabetes" / "pima-indians-diabetes.data": (
+        "https://archive.ics.uci.edu/ml/machine-learning-databases/"
+        "pima-indians-diabetes/pima-indians-diabetes.data"
+    ),
+    RAW_ROOT / "sonar_mines_rocks" / "sonar.all-data": (
+        "https://archive.ics.uci.edu/ml/machine-learning-databases/"
+        "undocumented/connectionist-bench/sonar/sonar.all-data"
+    ),
 }
 
 
