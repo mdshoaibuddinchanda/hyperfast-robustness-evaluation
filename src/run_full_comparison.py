@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import json
 import os
 import sys
@@ -47,6 +48,12 @@ class ExperimentConfig:
     noise_sigmas: list[float]
     missing_rates: list[float]
     reduced_fractions: list[float]
+
+
+def _log(message: str) -> None:
+    """Print one timestamped progress message."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {message}", flush=True)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -678,10 +685,45 @@ def run_full_comparison(
     """Run baseline plus robustness experiments for all datasets/seeds."""
     metric_rows: list[dict[str, Any]] = []
 
-    for dataset in config.datasets:
-        features, labels, _ = load_dataset(dataset)
+    total_datasets = len(config.datasets)
+    total_seeds = len(config.seeds)
+    total_pairs = total_datasets * total_seeds
+    conditions_per_pair = (
+        1
+        + len(config.noise_sigmas)
+        + len(config.missing_rates)
+        + len(config.reduced_fractions)
+    )
+    total_conditions = total_pairs * conditions_per_pair
+    completed_conditions = 0
+    run_started = time.perf_counter()
 
-        for seed in config.seeds:
+    _log(
+        "[RUN] Starting full comparison: "
+        f"datasets={total_datasets}, seeds={total_seeds}, "
+        f"conditions_per_dataset_seed={conditions_per_pair}, "
+        f"total_conditions={total_conditions}, gpu_baselines={use_gpu_baselines}"
+    )
+
+    for dataset_index, dataset in enumerate(config.datasets, start=1):
+        dataset_started = time.perf_counter()
+        _log(
+            f"[DATASET {dataset_index}/{total_datasets}] "
+            f"Loading dataset='{dataset}'"
+        )
+        features, labels, _ = load_dataset(dataset)
+        _log(
+            f"[DATASET {dataset_index}/{total_datasets}] "
+            f"Loaded dataset='{dataset}' rows={len(features)} cols={features.shape[1]}"
+        )
+
+        for seed_index, seed in enumerate(config.seeds, start=1):
+            pair_index = (dataset_index - 1) * total_seeds + seed_index
+            seed_started = time.perf_counter()
+            _log(
+                f"[PAIR {pair_index}/{total_pairs}] "
+                f"dataset='{dataset}' seed={seed} start"
+            )
             split_payload = _load_split(dataset, seed)
             split_file = f"data/splits/{dataset}_seed{seed}.json"
 
@@ -716,6 +758,10 @@ def run_full_comparison(
             tuned_best_params: dict[str, Any] | None = None
 
             for model_name, model_builder in model_builders.items():
+                _log(
+                    f"[TRAIN] dataset='{dataset}' seed={seed} "
+                    f"experiment='baseline' model='{model_name}' start"
+                )
                 result, predictions, fitted_model = _fit_and_evaluate(
                     model_name=model_name,
                     model_builder=model_builder,
@@ -727,6 +773,19 @@ def run_full_comparison(
                     y_test=y_test,
                 )
                 baseline_results.append(result)
+
+                if "error" in result:
+                    _log(
+                        f"[TRAIN] dataset='{dataset}' seed={seed} "
+                        f"experiment='baseline' model='{model_name}' error={result['error']}"
+                    )
+                else:
+                    timing = result.get("timing", {})
+                    _log(
+                        f"[TRAIN] dataset='{dataset}' seed={seed} "
+                        f"experiment='baseline' model='{model_name}' done "
+                        f"total_time_sec={float(timing.get('total_time_sec', 0.0)):.3f}"
+                    )
 
                 if fitted_model is not None:
                     fitted_models[model_name] = {
@@ -764,6 +823,10 @@ def run_full_comparison(
                 else:
                     model_errors[model_name] = str(result["error"])
 
+            _log(
+                f"[TRAIN] dataset='{dataset}' seed={seed} "
+                "experiment='baseline' model='hyperfast_tuned' start"
+            )
             tuned_result, tuned_predictions, tuned_model = _fit_and_evaluate_hyperfast_tuned(
                 seed=seed,
                 x_train=x_train,
@@ -774,6 +837,18 @@ def run_full_comparison(
                 y_test=y_test,
             )
             baseline_results.append(tuned_result)
+            if "error" in tuned_result:
+                _log(
+                    f"[TRAIN] dataset='{dataset}' seed={seed} "
+                    f"experiment='baseline' model='hyperfast_tuned' error={tuned_result['error']}"
+                )
+            else:
+                tuned_timing = tuned_result.get("timing", {})
+                _log(
+                    f"[TRAIN] dataset='{dataset}' seed={seed} "
+                    "experiment='baseline' model='hyperfast_tuned' done "
+                    f"total_time_sec={float(tuned_timing.get('total_time_sec', 0.0)):.3f}"
+                )
             if tuned_model is not None:
                 fitted_models["hyperfast_tuned"] = {
                     "model": tuned_model,
@@ -843,9 +918,18 @@ def run_full_comparison(
                     results=baseline_results,
                 )
             )
+            completed_conditions += 1
+            _log(
+                f"[COND {completed_conditions}/{total_conditions}] "
+                f"dataset='{dataset}' seed={seed} experiment='baseline' condition='clean' done"
+            )
 
             for sigma in config.noise_sigmas:
                 sigma_text = f"{sigma:.2f}"
+                _log(
+                    f"[EVAL] dataset='{dataset}' seed={seed} "
+                    f"experiment='noise' sigma={sigma_text} start"
+                )
                 x_val_noisy = _apply_gaussian_noise(
                     x_data=x_val,
                     n_numeric=n_numeric,
@@ -936,9 +1020,18 @@ def run_full_comparison(
                         results=noise_results,
                     )
                 )
+                completed_conditions += 1
+                _log(
+                    f"[COND {completed_conditions}/{total_conditions}] "
+                    f"dataset='{dataset}' seed={seed} experiment='noise' sigma={sigma_text} done"
+                )
 
             for rate in config.missing_rates:
                 rate_text = f"{rate:.2f}"
+                _log(
+                    f"[EVAL] dataset='{dataset}' seed={seed} "
+                    f"experiment='missingness' rate={rate_text} start"
+                )
                 x_val_missing_raw = _apply_mcar_missing(
                     frame=x_val_raw,
                     rate=rate,
@@ -1030,9 +1123,18 @@ def run_full_comparison(
                         results=missing_results,
                     )
                 )
+                completed_conditions += 1
+                _log(
+                    f"[COND {completed_conditions}/{total_conditions}] "
+                    f"dataset='{dataset}' seed={seed} experiment='missingness' rate={rate_text} done"
+                )
 
             for fraction in config.reduced_fractions:
                 fraction_text = f"{fraction:.2f}"
+                _log(
+                    f"[TRAIN] dataset='{dataset}' seed={seed} "
+                    f"experiment='reduced_data' fraction={fraction_text} start"
+                )
                 subset_indices = _sample_train_subset_indices(
                     y_train=y_train,
                     fraction=fraction,
@@ -1051,6 +1153,11 @@ def run_full_comparison(
                 reduced_predictions: list[dict[str, Any]] = []
 
                 for model_name, model_builder in model_builders.items():
+                    _log(
+                        f"[TRAIN] dataset='{dataset}' seed={seed} "
+                        f"experiment='reduced_data' fraction={fraction_text} "
+                        f"model='{model_name}' start"
+                    )
                     result, predictions, _ = _fit_and_evaluate(
                         model_name=model_name,
                         model_builder=model_builder,
@@ -1062,6 +1169,20 @@ def run_full_comparison(
                         y_test=y_test,
                     )
                     reduced_results.append(result)
+                    if "error" in result:
+                        _log(
+                            f"[TRAIN] dataset='{dataset}' seed={seed} "
+                            f"experiment='reduced_data' fraction={fraction_text} "
+                            f"model='{model_name}' error={result['error']}"
+                        )
+                    else:
+                        reduced_timing = result.get("timing", {})
+                        _log(
+                            f"[TRAIN] dataset='{dataset}' seed={seed} "
+                            f"experiment='reduced_data' fraction={fraction_text} "
+                            f"model='{model_name}' done "
+                            f"total_time_sec={float(reduced_timing.get('total_time_sec', 0.0)):.3f}"
+                        )
 
                     if "error" not in result:
                         reduced_predictions.extend(
@@ -1094,6 +1215,11 @@ def run_full_comparison(
                         )
 
                 if tuned_best_params is not None:
+                    _log(
+                        f"[TRAIN] dataset='{dataset}' seed={seed} "
+                        f"experiment='reduced_data' fraction={fraction_text} "
+                        "model='hyperfast_tuned' start with baseline-selected params"
+                    )
                     tuned_result, tuned_predictions, _ = _fit_and_evaluate(
                         model_name="hyperfast_tuned",
                         model_builder=lambda params=tuned_best_params: build_hyperfast(
@@ -1113,6 +1239,11 @@ def run_full_comparison(
                         y_test=y_test,
                     )
                 else:
+                    _log(
+                        f"[TRAIN] dataset='{dataset}' seed={seed} "
+                        f"experiment='reduced_data' fraction={fraction_text} "
+                        "model='hyperfast_tuned' start with fresh selection"
+                    )
                     tuned_result, tuned_predictions, _ = _fit_and_evaluate_hyperfast_tuned(
                         seed=seed,
                         x_train=x_train_sub,
@@ -1123,6 +1254,20 @@ def run_full_comparison(
                         y_test=y_test,
                     )
                 reduced_results.append(tuned_result)
+                if "error" in tuned_result:
+                    _log(
+                        f"[TRAIN] dataset='{dataset}' seed={seed} "
+                        f"experiment='reduced_data' fraction={fraction_text} "
+                        f"model='hyperfast_tuned' error={tuned_result['error']}"
+                    )
+                else:
+                    reduced_tuned_timing = tuned_result.get("timing", {})
+                    _log(
+                        f"[TRAIN] dataset='{dataset}' seed={seed} "
+                        f"experiment='reduced_data' fraction={fraction_text} "
+                        "model='hyperfast_tuned' done "
+                        f"total_time_sec={float(reduced_tuned_timing.get('total_time_sec', 0.0)):.3f}"
+                    )
                 if "error" not in tuned_result:
                     reduced_predictions.extend(
                         _build_prediction_rows(
@@ -1176,11 +1321,32 @@ def run_full_comparison(
                         results=reduced_results,
                     )
                 )
+                completed_conditions += 1
+                _log(
+                    f"[COND {completed_conditions}/{total_conditions}] "
+                    f"dataset='{dataset}' seed={seed} experiment='reduced_data' "
+                    f"fraction={fraction_text} done"
+                )
+
+            _log(
+                f"[PAIR {pair_index}/{total_pairs}] dataset='{dataset}' seed={seed} done "
+                f"elapsed_sec={time.perf_counter() - seed_started:.1f}"
+            )
+
+        _log(
+            f"[DATASET {dataset_index}/{total_datasets}] dataset='{dataset}' done "
+            f"elapsed_sec={time.perf_counter() - dataset_started:.1f}"
+        )
 
     RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
     metrics_df = pd.DataFrame(metric_rows)
     metrics_df.to_csv(RESULTS_ROOT / "metrics.csv", index=False)
+    _log(f"[SAVE] Wrote long-form metrics to {RESULTS_ROOT / 'metrics.csv'}")
     _summarize_metrics(metrics_df)
+    _log(
+        "[RUN] Full comparison complete "
+        f"elapsed_sec={time.perf_counter() - run_started:.1f}"
+    )
 
 
 def _parse_list_argument(raw: str | None, cast_type: Any) -> list[Any] | None:
@@ -1243,11 +1409,11 @@ def main() -> None:
         or os.getenv("HF_USE_GPU_BASELINES", "0") == "1"
     )
     if use_gpu_baselines:
-        print("Using GPU baseline preference (RAPIDS/cuML if available).")
+        _log("Using GPU baseline preference (RAPIDS/cuML if available).")
 
     run_full_comparison(config, use_gpu_baselines=use_gpu_baselines)
-    print(f"Saved long-form metrics: {RESULTS_ROOT / 'metrics.csv'}")
-    print(
+    _log(f"Saved long-form metrics: {RESULTS_ROOT / 'metrics.csv'}")
+    _log(
         "Saved summary tables: "
         f"{SUMMARY_ROOT / 'test_mean_std_by_condition.csv'}"
     )

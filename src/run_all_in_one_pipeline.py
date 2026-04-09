@@ -22,6 +22,7 @@ Auto behavior default:
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import json
 import os
 import re
@@ -102,22 +103,44 @@ class StepResult:
     elapsed_sec: float
 
 
+def _log(message: str) -> None:
+    """Print one timestamped log line."""
+    now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{now_text}] {message}", flush=True)
+
+
 def _run_command(label: str, args: list[str]) -> None:
-    """Run one subprocess step from project root and fail fast on errors."""
-    print(f"\n[STEP] {label}")
-    print("[CMD] " + " ".join(args))
+    """Run one subprocess step from project root and stream timestamped output."""
+    _log(f"[STEP] {label}")
+    _log("[CMD] " + " ".join(args))
     started = time.perf_counter()
-    completed = subprocess.run(
+    child_env = os.environ.copy()
+    # Force unbuffered Python child process output for live progress visibility.
+    child_env["PYTHONUNBUFFERED"] = "1"
+
+    process = subprocess.Popen(
         args,
         cwd=PROJECT_ROOT,
-        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        env=child_env,
     )
+
+    assert process.stdout is not None
+    for line in process.stdout:
+        line = line.rstrip()
+        if line:
+            _log(f"[{label}] {line}")
+
+    completed = process.wait()
     elapsed = time.perf_counter() - started
-    if completed.returncode != 0:
+    if completed != 0:
         raise RuntimeError(
-            f"Step failed: {label} (exit={completed.returncode}, elapsed={elapsed:.1f}s)"
+            f"Step failed: {label} (exit={completed}, elapsed={elapsed:.1f}s)"
         )
-    print(f"[OK] {label} ({elapsed:.1f}s)")
+    _log(f"[OK] {label} ({elapsed:.1f}s)")
 
 
 def _parse_requirement_line(line: str) -> tuple[str, str | None] | None:
@@ -138,8 +161,14 @@ def _parse_requirement_line(line: str) -> tuple[str, str | None] | None:
     return None
 
 
-def _missing_requirements(requirements_path: Path) -> list[str]:
+def _missing_requirements(
+    requirements_path: Path,
+    relaxed_exact_pins: set[str] | None = None,
+) -> list[str]:
     """Return list of missing or version-mismatched requirements."""
+    relaxed_exact_pins = {
+        item.lower() for item in (relaxed_exact_pins or set())
+    }
     missing: list[str] = []
     lines = requirements_path.read_text(encoding="utf-8").splitlines()
 
@@ -155,7 +184,11 @@ def _missing_requirements(requirements_path: Path) -> list[str]:
             missing.append(f"{package_name} (not installed)")
             continue
 
-        if pinned is not None and installed_version != pinned:
+        if (
+            pinned is not None
+            and installed_version != pinned
+            and package_name.lower() not in relaxed_exact_pins
+        ):
             missing.append(
                 f"{package_name} (installed={installed_version}, required={pinned})"
             )
@@ -163,19 +196,25 @@ def _missing_requirements(requirements_path: Path) -> list[str]:
     return missing
 
 
-def _ensure_requirements(auto_install: bool) -> None:
+def _ensure_requirements(
+    auto_install: bool,
+    relaxed_exact_pins: set[str] | None = None,
+) -> None:
     """Validate requirements and optionally install/upgrade missing entries."""
     if not REQUIREMENTS_PATH.exists():
         raise FileNotFoundError(f"Missing requirements file: {REQUIREMENTS_PATH}")
 
-    missing = _missing_requirements(REQUIREMENTS_PATH)
+    missing = _missing_requirements(
+        REQUIREMENTS_PATH,
+        relaxed_exact_pins=relaxed_exact_pins,
+    )
     if not missing:
-        print("[OK] Requirements check passed.")
+        _log("[OK] Requirements check passed.")
         return
 
-    print("[WARN] Requirement issues detected:")
+    _log("[WARN] Requirement issues detected:")
     for item in missing:
-        print(f"  - {item}")
+        _log(f"  - {item}")
 
     if not auto_install:
         raise RuntimeError(
@@ -194,13 +233,61 @@ def _ensure_requirements(auto_install: bool) -> None:
             [sys.executable, "-m", "pip", "install", "-r", str(REQUIREMENTS_PATH)],
         )
 
-    missing_after = _missing_requirements(REQUIREMENTS_PATH)
+    missing_after = _missing_requirements(
+        REQUIREMENTS_PATH,
+        relaxed_exact_pins=relaxed_exact_pins,
+    )
     if missing_after:
         raise RuntimeError(
             "Requirements still missing after installation: "
             + ", ".join(missing_after)
         )
-    print("[OK] Requirements are now satisfied.")
+    _log("[OK] Requirements are now satisfied.")
+
+
+def _is_colab_runtime() -> bool:
+    """Return True when running inside Google Colab."""
+    return "COLAB_RELEASE_TAG" in os.environ or Path("/content").exists()
+
+
+def _detect_gpu_name() -> str | None:
+    """Return GPU name from nvidia-smi when available."""
+    if shutil.which("nvidia-smi") is None:
+        return None
+
+    result = subprocess.run(
+        ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+
+    names = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if not names:
+        return None
+    return names[0]
+
+
+def _install_p100_torch_stack() -> None:
+    """Install CUDA 11.x compatible torch stack for P100 GPUs."""
+    _run_command(
+        "Install CUDA 11.8 torch stack for P100",
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            "--no-cache-dir",
+            "torch==2.5.1+cu118",
+            "torchvision==0.20.1+cu118",
+            "torchaudio==2.5.1+cu118",
+            "--index-url",
+            "https://download.pytorch.org/whl/cu118",
+        ],
+    )
 
 
 def _download_file(url: str, destination: Path) -> None:
@@ -223,7 +310,7 @@ def _ensure_datasets(auto_download: bool) -> None:
     """Ensure required raw dataset files are present, optionally downloading."""
     missing = [path for path in DATA_SOURCES if not path.exists()]
     if not missing:
-        print("[OK] All required dataset files are present.")
+        _log("[OK] All required dataset files are present.")
         return
 
     if not auto_download:
@@ -232,18 +319,18 @@ def _ensure_datasets(auto_download: bool) -> None:
             "Missing dataset files and auto-download is disabled:\n" + missing_text
         )
 
-    print("[STEP] Download missing dataset files")
+    _log("[STEP] Download missing dataset files")
     for path in missing:
         url = DATA_SOURCES[path]
-        print(f"[DOWNLOAD] {url} -> {path}")
+        _log(f"[DOWNLOAD] {url} -> {path}")
         _download_file(url, path)
-    print("[OK] Dataset download completed.")
+    _log("[OK] Dataset download completed.")
 
 
 def _ensure_checkpoint(auto_download: bool) -> None:
     """Ensure local HyperFast checkpoint exists, optionally downloading."""
     if CHECKPOINT_PATH.exists() and CHECKPOINT_PATH.stat().st_size > 0:
-        print("[OK] HyperFast checkpoint is present.")
+        _log("[OK] HyperFast checkpoint is present.")
         return
 
     if not auto_download:
@@ -251,11 +338,11 @@ def _ensure_checkpoint(auto_download: bool) -> None:
             "HyperFast checkpoint is missing and auto-download is disabled."
         )
 
-    print("[STEP] Download HyperFast checkpoint")
+    _log("[STEP] Download HyperFast checkpoint")
     from download_hyperfast_checkpoint import download_checkpoint
 
     download_checkpoint(CHECKPOINT_PATH)
-    print("[OK] HyperFast checkpoint downloaded.")
+    _log("[OK] HyperFast checkpoint downloaded.")
 
 
 def _expected_split_paths() -> list[Path]:
@@ -277,7 +364,7 @@ def _ensure_splits(auto_generate: bool) -> None:
     missing_paths = [path for path in expected_paths if not path.exists()]
 
     if not missing_paths:
-        print("[OK] Split files are present.")
+        _log("[OK] Split files are present.")
         return
 
     if not auto_generate:
@@ -339,7 +426,7 @@ def _guard_concurrent_full_run(allow_concurrent_run: bool) -> None:
         return
 
     if allow_concurrent_run:
-        print("[WARN] Active full comparison process detected, continuing by request.")
+        _log("[WARN] Active full comparison process detected, continuing by request.")
         return
 
     detail_lines = [
@@ -358,8 +445,15 @@ def run_pipeline(args: argparse.Namespace) -> list[StepResult]:
     """Execute end-to-end pipeline with preflight and post-run validation."""
     summary: list[StepResult] = []
 
+    relaxed_exact_pins: set[str] = set()
+    if args.optimize_p100_torch:
+        _install_p100_torch_stack()
+        # Keep torch pin checks relaxed because requirements may pin a different CUDA build.
+        relaxed_exact_pins.update({"torch", "torchvision", "torchaudio"})
+
     def run_step(name: str, fn: Any) -> None:
         start = time.perf_counter()
+        _log(f"[PROGRESS] Starting step '{name}'")
         try:
             fn()
             summary.append(StepResult(name=name, ok=True, elapsed_sec=time.perf_counter() - start))
@@ -373,7 +467,10 @@ def run_pipeline(args: argparse.Namespace) -> list[StepResult]:
     )
     run_step(
         "requirements_check",
-        lambda: _ensure_requirements(args.auto_install_requirements),
+        lambda: _ensure_requirements(
+            args.auto_install_requirements,
+            relaxed_exact_pins=relaxed_exact_pins,
+        ),
     )
     run_step(
         "dataset_check_or_download",
@@ -443,6 +540,14 @@ def _build_parser() -> argparse.ArgumentParser:
             "full comparison when available."
         ),
     )
+    parser.add_argument(
+        "--optimize-p100-torch",
+        action="store_true",
+        help=(
+            "Install CUDA 11.8-compatible torch stack for Colab P100 GPUs and "
+            "relax strict torch pin checks."
+        ),
+    )
 
     # Backward-compatible enable flags (kept hidden), plus explicit disable flags.
     parser.add_argument(
@@ -508,27 +613,38 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
 
-    print("[INFO] All-in-one pipeline runner starting...")
-    print(f"[INFO] Project root: {PROJECT_ROOT}")
-    print(
+    _log("[INFO] All-in-one pipeline runner starting...")
+    _log(f"[INFO] Project root: {PROJECT_ROOT}")
+
+    gpu_name = _detect_gpu_name()
+    if gpu_name:
+        _log(f"[INFO] Detected GPU: {gpu_name}")
+        if _is_colab_runtime() and "p100" in gpu_name.lower() and not args.optimize_p100_torch:
+            _log(
+                "[HINT] Colab P100 detected. For CUDA 11.x torch compatibility, "
+                "rerun with --optimize-p100-torch."
+            )
+
+    _log(
         "[INFO] Auto mode: "
         f"requirements={args.auto_install_requirements}, "
         f"data={args.auto_download_data}, "
         f"checkpoint={args.auto_download_checkpoint}, "
         f"splits={args.auto_generate_splits}"
     )
-    print(f"[INFO] GPU baselines requested: {args.use_gpu_baselines}")
+    _log(f"[INFO] GPU baselines requested: {args.use_gpu_baselines}")
+    _log(f"[INFO] P100 torch optimization requested: {args.optimize_p100_torch}")
 
     started = time.perf_counter()
     summary: list[StepResult] = []
     try:
         summary = run_pipeline(args)
     finally:
-        print("\n[SUMMARY]")
+        _log("[SUMMARY]")
         for item in summary:
             status = "OK" if item.ok else "FAIL"
-            print(f"- {item.name}: {status} ({item.elapsed_sec:.1f}s)")
-        print(f"[INFO] Total elapsed: {time.perf_counter() - started:.1f}s")
+            _log(f"- {item.name}: {status} ({item.elapsed_sec:.1f}s)")
+        _log(f"[INFO] Total elapsed: {time.perf_counter() - started:.1f}s")
 
 
 if __name__ == "__main__":
