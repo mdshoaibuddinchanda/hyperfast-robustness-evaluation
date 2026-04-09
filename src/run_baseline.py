@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -49,11 +50,34 @@ def _extract_positive_scores(model: Any, x_data: np.ndarray) -> np.ndarray | Non
     if not hasattr(model, "predict_proba"):
         return None
 
-    probabilities = model.predict_proba(x_data)
+    probabilities = _to_numpy_array(model.predict_proba(x_data))
     if probabilities.ndim != 2 or probabilities.shape[1] < 2:
         return None
 
     return probabilities[:, 1]
+
+
+def _to_numpy_array(values: Any) -> np.ndarray:
+    """Convert cupy/cudf/numpy/list-like outputs to a numpy array."""
+    if isinstance(values, np.ndarray):
+        return values
+
+    if hasattr(values, "get"):
+        try:
+            return np.asarray(values.get())
+        except Exception:
+            pass
+
+    if hasattr(values, "to_numpy"):
+        try:
+            as_numpy = values.to_numpy()
+            if isinstance(as_numpy, np.ndarray):
+                return as_numpy
+            return np.asarray(as_numpy)
+        except Exception:
+            pass
+
+    return np.asarray(values)
 
 
 def _run_model(
@@ -72,8 +96,8 @@ def _run_model(
     fit_time_sec = time.perf_counter() - fit_start
 
     pred_start = time.perf_counter()
-    val_pred = model.predict(x_val)
-    test_pred = model.predict(x_test)
+    val_pred = _to_numpy_array(model.predict(x_val))
+    test_pred = _to_numpy_array(model.predict(x_test))
     predict_time_sec = time.perf_counter() - pred_start
 
     val_score = _extract_positive_scores(model, x_val)
@@ -122,8 +146,8 @@ def _run_hyperfast_tuned(
     )
 
     pred_start = time.perf_counter()
-    val_pred = model.predict(x_val)
-    test_pred = model.predict(x_test)
+    val_pred = _to_numpy_array(model.predict(x_val))
+    test_pred = _to_numpy_array(model.predict(x_test))
     predict_time_sec = time.perf_counter() - pred_start
 
     val_score = _extract_positive_scores(model, x_val)
@@ -153,7 +177,12 @@ def _run_hyperfast_tuned(
     }
 
 
-def run_baseline(dataset: str, seed: int, output_root: Path) -> Path:
+def run_baseline(
+    dataset: str,
+    seed: int,
+    output_root: Path,
+    use_gpu_baselines: bool = False,
+) -> Path:
     """Run clean baseline models for one dataset/seed and save artifacts."""
     features, labels, _ = load_dataset(dataset)
     split_payload = _load_split(dataset, seed)
@@ -179,7 +208,10 @@ def run_baseline(dataset: str, seed: int, output_root: Path) -> Path:
         "hyperfast_default": lambda: build_hyperfast_default(seed),
         **{
             name: (lambda model=model: model)
-            for name, model in get_classical_baselines(seed).items()
+            for name, model in get_classical_baselines(
+                seed,
+                prefer_gpu=use_gpu_baselines,
+            ).items()
         },
     }
 
@@ -336,12 +368,28 @@ def main() -> None:
         type=Path,
         default=PROJECT_ROOT / "runs" / "baseline",
     )
+    parser.add_argument(
+        "--use-gpu-baselines",
+        action="store_true",
+        help=(
+            "Use RAPIDS/cuML GPU Logistic Regression and Random Forest when "
+            "available. Falls back to sklearn CPU baselines otherwise."
+        ),
+    )
     args = parser.parse_args()
+
+    use_gpu_baselines = (
+        args.use_gpu_baselines
+        or os.getenv("HF_USE_GPU_BASELINES", "0") == "1"
+    )
+    if use_gpu_baselines:
+        print("Using GPU baseline preference (RAPIDS/cuML if available).")
 
     metrics_path = run_baseline(
         dataset=args.dataset,
         seed=args.seed,
         output_root=args.output_root,
+        use_gpu_baselines=use_gpu_baselines,
     )
     print(f"Saved baseline metrics: {metrics_path}")
 

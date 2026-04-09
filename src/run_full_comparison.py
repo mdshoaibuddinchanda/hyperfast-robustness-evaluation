@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from dataclasses import dataclass
@@ -75,25 +76,51 @@ def _load_split(dataset: str, seed: int) -> dict[str, Any]:
     return json.loads(split_path.read_text(encoding="utf-8"))
 
 
+def _to_numpy_array(values: Any) -> np.ndarray:
+    """Convert cupy/cudf/numpy/list-like outputs to a numpy array."""
+    if isinstance(values, np.ndarray):
+        return values
+
+    if hasattr(values, "get"):
+        try:
+            return np.asarray(values.get())
+        except Exception:
+            pass
+
+    if hasattr(values, "to_numpy"):
+        try:
+            as_numpy = values.to_numpy()
+            if isinstance(as_numpy, np.ndarray):
+                return as_numpy
+            return np.asarray(as_numpy)
+        except Exception:
+            pass
+
+    return np.asarray(values)
+
+
 def _extract_positive_scores(model: Any, x_data: np.ndarray) -> np.ndarray | None:
     """Return positive-class scores when model provides predict_proba."""
     if not hasattr(model, "predict_proba"):
         return None
 
-    probabilities = model.predict_proba(x_data)
+    probabilities = _to_numpy_array(model.predict_proba(x_data))
     if probabilities.ndim != 2 or probabilities.shape[1] < 2:
         return None
 
     return probabilities[:, 1]
 
 
-def _build_model_builders(seed: int) -> dict[str, Any]:
+def _build_model_builders(seed: int, use_gpu_baselines: bool = False) -> dict[str, Any]:
     """Build estimator factories for the active seed."""
     builders: dict[str, Any] = {
         "hyperfast_default": lambda: build_hyperfast_default(seed),
     }
 
-    for model_name, model in get_classical_baselines(seed).items():
+    for model_name, model in get_classical_baselines(
+        seed,
+        prefer_gpu=use_gpu_baselines,
+    ).items():
         builders[model_name] = lambda model=model: model
 
     return builders
@@ -118,8 +145,8 @@ def _fit_and_evaluate(
         fit_time = time.perf_counter() - fit_start
 
         pred_start = time.perf_counter()
-        val_pred = model.predict(x_val)
-        test_pred = model.predict(x_test)
+        val_pred = _to_numpy_array(model.predict(x_val))
+        test_pred = _to_numpy_array(model.predict(x_test))
         predict_time = time.perf_counter() - pred_start
 
         val_score = _extract_positive_scores(model, x_val)
@@ -196,8 +223,8 @@ def _fit_and_evaluate_hyperfast_tuned(
         )
 
         pred_start = time.perf_counter()
-        val_pred = model.predict(x_val)
-        test_pred = model.predict(x_test)
+        val_pred = _to_numpy_array(model.predict(x_val))
+        test_pred = _to_numpy_array(model.predict(x_test))
         predict_time = time.perf_counter() - pred_start
 
         val_score = _extract_positive_scores(model, x_val)
@@ -266,8 +293,8 @@ def _evaluate_pretrained(
 ) -> tuple[dict[str, Any], dict[str, list[Any]]]:
     """Evaluate a pre-trained model under corrupted validation/test inputs."""
     pred_start = time.perf_counter()
-    val_pred = model.predict(x_val)
-    test_pred = model.predict(x_test)
+    val_pred = _to_numpy_array(model.predict(x_val))
+    test_pred = _to_numpy_array(model.predict(x_test))
     predict_time = time.perf_counter() - pred_start
 
     val_score = _extract_positive_scores(model, x_val)
@@ -644,7 +671,10 @@ def _summarize_metrics(metrics_df: pd.DataFrame) -> None:
     )
 
 
-def run_full_comparison(config: ExperimentConfig) -> None:
+def run_full_comparison(
+    config: ExperimentConfig,
+    use_gpu_baselines: bool = False,
+) -> None:
     """Run baseline plus robustness experiments for all datasets/seeds."""
     metric_rows: list[dict[str, Any]] = []
 
@@ -675,7 +705,10 @@ def run_full_comparison(config: ExperimentConfig) -> None:
             x_val = np.asarray(preprocessor.transform(x_val_raw))
             x_test = np.asarray(preprocessor.transform(x_test_raw))
 
-            model_builders = _build_model_builders(seed)
+            model_builders = _build_model_builders(
+                seed,
+                use_gpu_baselines=use_gpu_baselines,
+            )
             baseline_results: list[dict[str, Any]] = []
             baseline_predictions: list[dict[str, Any]] = []
             fitted_models: dict[str, dict[str, Any]] = {}
@@ -1172,6 +1205,14 @@ def main() -> None:
         default=None,
         help="Comma-separated integer seeds.",
     )
+    parser.add_argument(
+        "--use-gpu-baselines",
+        action="store_true",
+        help=(
+            "Use RAPIDS/cuML GPU Logistic Regression and Random Forest when "
+            "available. Falls back to sklearn CPU baselines otherwise."
+        ),
+    )
     args = parser.parse_args()
 
     config = _load_config()
@@ -1197,7 +1238,14 @@ def main() -> None:
             reduced_fractions=config.reduced_fractions,
         )
 
-    run_full_comparison(config)
+    use_gpu_baselines = (
+        args.use_gpu_baselines
+        or os.getenv("HF_USE_GPU_BASELINES", "0") == "1"
+    )
+    if use_gpu_baselines:
+        print("Using GPU baseline preference (RAPIDS/cuML if available).")
+
+    run_full_comparison(config, use_gpu_baselines=use_gpu_baselines)
     print(f"Saved long-form metrics: {RESULTS_ROOT / 'metrics.csv'}")
     print(
         "Saved summary tables: "

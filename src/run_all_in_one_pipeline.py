@@ -391,7 +391,15 @@ def run_pipeline(args: argparse.Namespace) -> list[StepResult]:
         "run_full_comparison",
         lambda: _run_command(
             "Run full comparison",
-            [sys.executable, str(SRC_ROOT / "run_full_comparison.py")],
+            [
+                sys.executable,
+                str(SRC_ROOT / "run_full_comparison.py"),
+                *(
+                    ["--use-gpu-baselines"]
+                    if args.use_gpu_baselines
+                    else []
+                ),
+            ],
         ),
     )
     run_step(
@@ -426,6 +434,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--allow-concurrent-run",
         action="store_true",
         help="Allow running even when another run_full_comparison.py is active.",
+    )
+    parser.add_argument(
+        "--use-gpu-baselines",
+        action="store_true",
+        help=(
+            "Use RAPIDS/cuML GPU Logistic Regression and Random Forest in "
+            "full comparison when available."
+        ),
     )
 
     # Backward-compatible enable flags (kept hidden), plus explicit disable flags.
@@ -501,6 +517,7 @@ def main() -> None:
         f"checkpoint={args.auto_download_checkpoint}, "
         f"splits={args.auto_generate_splits}"
     )
+    print(f"[INFO] GPU baselines requested: {args.use_gpu_baselines}")
 
     started = time.perf_counter()
     summary: list[StepResult] = []

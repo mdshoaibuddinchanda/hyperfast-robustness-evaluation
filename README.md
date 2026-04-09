@@ -86,6 +86,20 @@ Recommended one-command full run (checks/downloads/splits/benchmark/analysis):
 python src/run_all_in_one_pipeline.py
 ```
 
+GPU-accelerated baseline mode (RAPIDS/cuML) for Colab/T4:
+
+```powershell
+python src/run_all_in_one_pipeline.py --use-gpu-baselines
+```
+
+Colab RAPIDS install snippet (run before benchmark command):
+
+```python
+!pip install -q --extra-index-url=https://pypi.nvidia.com cudf-cu12 cuml-cu12
+```
+
+If RAPIDS is not available, the runner automatically falls back to CPU baselines.
+
 1) Download HyperFast checkpoint (local file `hyperfast.ckpt`):
 
 ```powershell
@@ -102,6 +116,12 @@ python src/generate_splits.py
 
 ```powershell
 python src/run_full_comparison.py
+```
+
+GPU-accelerated baseline mode (when RAPIDS/cuML is installed):
+
+```powershell
+python src/run_full_comparison.py --use-gpu-baselines
 ```
 
 Optional quick smoke run:
