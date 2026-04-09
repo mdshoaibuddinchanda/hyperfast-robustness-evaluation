@@ -19,7 +19,7 @@ Robustness is evaluated under:
 Default benchmark scope in this repository:
 
 - 10 tabular binary datasets (UCI)
-- 20 stratified seeds per dataset
+- 15 stratified seeds per dataset
 
 Primary metrics:
 
