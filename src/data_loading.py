@@ -288,7 +288,7 @@ def load_mushroom(
 def load_pima_diabetes(
     data_root: Path = RAW_DATA_ROOT,
 ) -> tuple[pd.DataFrame, pd.Series]:
-    """Load UCI Pima Indians Diabetes dataset."""
+    """Load Pima Indians Diabetes from UCI-style or OpenML-style CSV."""
     path = data_root / "pima_diabetes" / "pima-indians-diabetes.data"
     columns = [
         "pregnancies",
@@ -301,8 +301,43 @@ def load_pima_diabetes(
         "age",
         "outcome",
     ]
-    frame = pd.read_csv(path, header=None, names=columns)
+    frame_with_header = pd.read_csv(path)
+    normalized_columns = [str(col).strip().lower() for col in frame_with_header.columns]
 
+    if "class" in normalized_columns or "outcome" in normalized_columns:
+        frame = frame_with_header.copy()
+        frame.columns = normalized_columns
+        frame = frame.rename(
+            columns={
+                "preg": "pregnancies",
+                "plas": "glucose",
+                "pres": "blood_pressure",
+                "skin": "skin_thickness",
+                "insu": "insulin",
+                "mass": "bmi",
+                "pedi": "diabetes_pedigree_function",
+                "class": "outcome",
+            }
+        )
+
+        if "outcome" not in frame.columns:
+            raise ValueError("Pima dataset file is missing outcome/class target column.")
+
+        labels_raw = frame["outcome"]
+        labels_text = labels_raw.astype(str).str.strip().str.lower()
+        if labels_text.isin(["tested_positive", "tested_negative"]).all():
+            labels = (labels_text == "tested_positive").astype(int)
+        else:
+            labels = pd.to_numeric(labels_raw, errors="raise").astype(int)
+
+        feature_columns = [name for name in columns[:-1] if name in frame.columns]
+        if not feature_columns:
+            feature_columns = [name for name in frame.columns if name != "outcome"]
+
+        features = frame[feature_columns].apply(pd.to_numeric, errors="coerce")
+        return features, labels
+
+    frame = pd.read_csv(path, header=None, names=columns)
     labels = pd.to_numeric(frame["outcome"], errors="raise").astype(int)
     features = frame.drop(columns=["outcome"])
     return features, labels

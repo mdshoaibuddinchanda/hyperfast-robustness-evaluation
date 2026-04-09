@@ -83,8 +83,8 @@ DATA_SOURCES: dict[Path, str] = {
         "mushroom/agaricus-lepiota.data"
     ),
     RAW_ROOT / "pima_diabetes" / "pima-indians-diabetes.data": (
-        "https://archive.ics.uci.edu/ml/machine-learning-databases/"
-        "pima-indians-diabetes/pima-indians-diabetes.data"
+        "https://www.openml.org/data/get_csv/37/"
+        "dataset_37_diabetes.arff"
     ),
     RAW_ROOT / "sonar_mines_rocks" / "sonar.all-data": (
         "https://archive.ics.uci.edu/ml/machine-learning-databases/"
